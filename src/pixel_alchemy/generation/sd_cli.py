@@ -81,6 +81,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from PIL import Image
+
+
+def _get_image_size(path: Path) -> tuple[int, int]:
+    with Image.open(path) as img:
+        return img.size  # (width, height)
+
 
 def _find_sd_cli() -> Path:
     binary = shutil.which("sd-cli")
@@ -170,8 +177,8 @@ def edit(
     llm: str | Path,
     output: str | Path | None = None,
     *,
-    width: int = 512,
-    height: int = 512,
+    width: int | None = None,
+    height: int | None = None,
     steps: int = 4,
     cfg_scale: float = 1.0,
     sampling_method: str = "euler",
@@ -188,8 +195,8 @@ def edit(
         vae: Path to the VAE .safetensors file.
         llm: Path to the LLM .gguf file.
         output: Where to write the result. Defaults to <cwd>/edited.png.
-        width: Image width in pixels.
-        height: Image height in pixels.
+        width: Image width in pixels. Defaults to the reference image width.
+        height: Image height in pixels. Defaults to the reference image height.
         steps: Number of sampling steps.
         cfg_scale: Classifier-free guidance scale. Must be 1.0 — higher values cause artifacts with sd-cli (see https://github.com/leejet/stable-diffusion.cpp/issues/1309).
         sampling_method: Sampling method (e.g. "euler").
@@ -218,6 +225,11 @@ def edit(
         output = Path("edited.png")
     else:
         output = Path(output)
+
+    if width is None or height is None:
+        w, h = _get_image_size(reference)
+        width = width or w
+        height = height or h
 
     args: list[str] = [
         str(_find_sd_cli()),
@@ -253,8 +265,8 @@ def inpaint(
     llm: str | Path,
     output: str | Path | None = None,
     *,
-    width: int = 512,
-    height: int = 512,
+    width: int | None = None,
+    height: int | None = None,
     steps: int = 9,
     cfg_scale: float = 1.0,
     sampling_method: str = "euler",
@@ -275,8 +287,8 @@ def inpaint(
         vae: Path to the VAE .safetensors file.
         llm: Path to the LLM .gguf file.
         output: Where to write the result. Defaults to <cwd>/inpainted.png.
-        width: Image width in pixels.
-        height: Image height in pixels.
+        width: Image width in pixels. Defaults to the init_image width.
+        height: Image height in pixels. Defaults to the init_image height.
         steps: Number of sampling steps.
         cfg_scale: Classifier-free guidance scale. Must be 1.0 — higher values cause artifacts with sd-cli (see https://github.com/leejet/stable-diffusion.cpp/issues/1309).
         sampling_method: Sampling method (e.g. "euler").
@@ -310,6 +322,11 @@ def inpaint(
         output = Path("inpainted.png")
     else:
         output = Path(output)
+
+    if width is None or height is None:
+        w, h = _get_image_size(init_image)
+        width = width or w
+        height = height or h
 
     args: list[str] = [
         str(_find_sd_cli()),

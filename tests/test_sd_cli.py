@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image as PILImage
 
 from pixel_alchemy.generation.sd_cli import _find_sd_cli, edit, generate, inpaint
 
@@ -23,8 +24,8 @@ def model_files(tmp_path: Path) -> dict[str, Path]:
 def image_files(tmp_path: Path) -> dict[str, Path]:
     ref = tmp_path / "ref.png"
     mask = tmp_path / "mask.png"
-    ref.touch()
-    mask.touch()
+    PILImage.new("RGB", (640, 480), "red").save(ref)
+    PILImage.new("L", (640, 480), 255).save(mask)
     return {"reference": ref, "mask": mask}
 
 
@@ -240,3 +241,75 @@ def test_generate_cfg_scale(mock_find: MagicMock, mock_run: MagicMock, model_fil
     args = mock_run.call_args[0][0]
     assert "--cfg-scale" in args
     assert "7.5" in args
+
+
+@patch("pixel_alchemy.generation.sd_cli.subprocess.run")
+@patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
+def test_edit_infers_dimensions_from_reference(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    edit(reference=image_files["reference"], prompt="change it", **model_files)
+    args = mock_run.call_args[0][0]
+    assert "-W" in args
+    assert "640" in args
+    assert "-H" in args
+    assert "480" in args
+
+
+@patch("pixel_alchemy.generation.sd_cli.subprocess.run")
+@patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
+def test_edit_explicit_dimensions_override(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    edit(reference=image_files["reference"], prompt="change it", width=1024, height=768, **model_files)
+    args = mock_run.call_args[0][0]
+    assert "-W" in args
+    assert "1024" in args
+    assert "-H" in args
+    assert "768" in args
+
+
+@patch("pixel_alchemy.generation.sd_cli.subprocess.run")
+@patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
+def test_edit_partial_width_only(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    edit(reference=image_files["reference"], prompt="change it", width=1024, **model_files)
+    args = mock_run.call_args[0][0]
+    assert "-W" in args
+    assert "1024" in args
+    assert "-H" in args
+    assert "480" in args
+
+
+@patch("pixel_alchemy.generation.sd_cli.subprocess.run")
+@patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
+def test_inpaint_infers_dimensions_from_init_image(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", **model_files)
+    args = mock_run.call_args[0][0]
+    assert "-W" in args
+    assert "640" in args
+    assert "-H" in args
+    assert "480" in args
+
+
+@patch("pixel_alchemy.generation.sd_cli.subprocess.run")
+@patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
+def test_inpaint_explicit_dimensions_override(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    inpaint(
+        init_image=image_files["reference"],
+        mask=image_files["mask"],
+        prompt="a dog",
+        width=1024,
+        height=768,
+        **model_files,
+    )
+    args = mock_run.call_args[0][0]
+    assert "-W" in args
+    assert "1024" in args
+    assert "-H" in args
+    assert "768" in args
