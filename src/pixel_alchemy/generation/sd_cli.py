@@ -39,7 +39,7 @@ def generate(
         width: Image width in pixels.
         height: Image height in pixels.
         steps: Number of sampling steps.
-        cfg_scale: Classifier-free guidance scale.
+        cfg_scale: Classifier-free guidance scale. Must be 1.0 — higher values cause artifacts with sd-cli (see https://github.com/leejet/stable-diffusion.cpp/issues/1309).
         sampling_method: Sampling method (e.g. "euler", "dpm++2s_a").
         offload_to_cpu: Offload computation to CPU.
         diffusion_fa: Enable flash attention for diffusion.
@@ -114,7 +114,7 @@ def edit(
         width: Image width in pixels.
         height: Image height in pixels.
         steps: Number of sampling steps.
-        cfg_scale: Classifier-free guidance scale.
+        cfg_scale: Classifier-free guidance scale. Must be 1.0 — higher values cause artifacts with sd-cli (see https://github.com/leejet/stable-diffusion.cpp/issues/1309).
         sampling_method: Sampling method (e.g. "euler").
         offload_to_cpu: Offload computation to CPU.
         diffusion_fa: Enable flash attention for diffusion.
@@ -179,7 +179,7 @@ def inpaint(
     width: int = 512,
     height: int = 512,
     steps: int = 9,
-    cfg_scale: float = 2.0,
+    cfg_scale: float = 1.0,
     sampling_method: str = "euler",
     threads: int = 24,
     color: bool = True,
@@ -201,7 +201,7 @@ def inpaint(
         width: Image width in pixels.
         height: Image height in pixels.
         steps: Number of sampling steps.
-        cfg_scale: Classifier-free guidance scale.
+        cfg_scale: Classifier-free guidance scale. Must be 1.0 — higher values cause artifacts with sd-cli (see https://github.com/leejet/stable-diffusion.cpp/issues/1309).
         sampling_method: Sampling method (e.g. "euler").
         threads: Number of CPU threads.
         color: Enable color correction.
