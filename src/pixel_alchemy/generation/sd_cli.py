@@ -1,3 +1,80 @@
+"""Image generation via sd-cli (stable-diffusion.cpp).
+
+Supported diffusion-model / VAE / LLM combinations:
+
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+| Profile   | Diffusion Model                              | VAE                                          | LLM (text encoder)                           |
++===========+==============================================+==============================================+==============================================+
+| ZiT       | z_image_turbo-Q3_K.gguf                      | flux1_schnell_diffusion_pytorch_model.safetensors | Qwen3-4B-Instruct-2507-Q4_K_M.gguf        |
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+| Flux 2    | flux-2-klein-9b-Q4_0.gguf                    | flux2_dev_diffusion_pytorch_model.safetensors | Qwen3-8B-Q3_K_M.gguf                        |
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+| Bonsai    | bonsai_image_4b-mod_q8_0-q1_0.gguf           | flux2_dev_diffusion_pytorch_model.safetensors | Qwen3-4B-Instruct-2507-Q4_K_M.gguf        |
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+| Krea 2    | Krea-2-Turbo-Q8_0.gguf                       | wan_2.1_vae.safetensors                      | Qwen3VL-4B-Instruct-Q4_K_M.gguf             |
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+| Wan 2.2   | FastWan2.2-TI2V-5B-q8_0.gguf                 | (uses --tae / --vae-conv-direct)             | umt5-xxl-encoder-Q8_0.gguf (t5xxl)          |
++-----------+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+
+Notes:
+- Wan 2.2 has no Metal support yet and requires ``-M vid_gen`` (video mode).
+- Bonsai is a 1-bit quantised Flux variant; use ``--vae-tiling`` for large images.
+- All profiles support generation, editing (``-r``), and inpainting (``--init-img`` + ``--mask``) except Wan 2.2 (video only).
+- ``--cfg-scale`` should be kept at 1.0 — higher values cause artifacts with sd-cli.
+- ``--diffusion-fa`` (flash attention) and ``--offload-to-cpu`` are enabled by default in this module.
+
+Example (Flux 2, generation)::
+
+    from pixel_alchemy.generation.sd_cli import generate
+
+    generate(
+        "A lovely anime orange cat",
+        diffusion_model="/path/to/flux-2-klein-9b-Q4_0.gguf",
+        vae="/path/to/flux2_dev_diffusion_pytorch_model.safetensors",
+        llm="/path/to/Qwen3-8B-Q3_K_M.gguf",
+        output="orange-cat.png",
+    )
+
+Example (ZiT, generation)::
+
+    generate(
+        "A cinematic, melancholic photograph...",
+        diffusion_model="/path/to/z_image_turbo-Q3_K.gguf",
+        vae="/path/to/flux1_schnell_diffusion_pytorch_model.safetensors",
+        llm="/path/to/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        output="zi-output.png",
+        steps=8,
+        cfg_scale=1.0,
+    )
+
+Example (Flux 2, edit)::
+
+    from pixel_alchemy.generation.sd_cli import edit
+
+    edit(
+        reference="cat.png",
+        prompt="change to an orange cat",
+        diffusion_model="/path/to/flux-2-klein-9b-Q4_0.gguf",
+        vae="/path/to/flux2_dev_diffusion_pytorch_model.safetensors",
+        llm="/path/to/Qwen3-8B-Q3_K_M.gguf",
+        output="orange-cat.png",
+    )
+
+Example (Flux 2, inpaint)::
+
+    from pixel_alchemy.generation.sd_cli import inpaint
+
+    inpaint(
+        init_image="bench.jpg",
+        mask="dog-bench-mask.png",
+        prompt="a lovely dog",
+        diffusion_model="/path/to/flux-2-klein-9b-Q4_0.gguf",
+        vae="/path/to/flux2_dev_diffusion_pytorch_model.safetensors",
+        llm="/path/to/Qwen3-8B-Q3_K_M.gguf",
+        output="dog-lovely-bench.png",
+    )
+"""
+
 from __future__ import annotations
 
 import shutil
