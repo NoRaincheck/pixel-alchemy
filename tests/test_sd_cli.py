@@ -98,7 +98,9 @@ def test_generate_missing_model(model_files: dict[str, Path]) -> None:
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_edit_uses_reference_flag(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_edit_uses_reference_flag(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     edit(reference=image_files["reference"], prompt="change it", **model_files)
     args = mock_run.call_args[0][0]
     assert "-r" in args
@@ -107,14 +109,18 @@ def test_edit_uses_reference_flag(mock_find: MagicMock, mock_run: MagicMock, mod
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_edit_default_output(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_edit_default_output(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     result = edit(reference=image_files["reference"], prompt="change it", **model_files)
     assert result == Path("edited.png")
 
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_edit_custom_output(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_edit_custom_output(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     result = edit(reference=image_files["reference"], prompt="change it", output="my-edit.png", **model_files)
     assert result == Path("my-edit.png")
 
@@ -126,7 +132,9 @@ def test_edit_missing_reference(model_files: dict[str, Path]) -> None:
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_uses_init_img_and_mask(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_uses_init_img_and_mask(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", **model_files)
     args = mock_run.call_args[0][0]
     assert "--init-img" in args
@@ -137,14 +145,18 @@ def test_inpaint_uses_init_img_and_mask(mock_find: MagicMock, mock_run: MagicMoc
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_default_output(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_default_output(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     result = inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", **model_files)
     assert result == Path("inpainted.png")
 
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_vae_tiling_flags(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_vae_tiling_flags(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", **model_files)
     args = mock_run.call_args[0][0]
     assert "--vae-tiling" in args
@@ -153,15 +165,21 @@ def test_inpaint_vae_tiling_flags(mock_find: MagicMock, mock_run: MagicMock, mod
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_no_vae_tiling(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
-    inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", vae_tiling=False, **model_files)
+def test_inpaint_no_vae_tiling(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
+    inpaint(
+        init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", vae_tiling=False, **model_files
+    )
     args = mock_run.call_args[0][0]
     assert "--vae-tiling" not in args
 
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_color_flag(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_color_flag(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", **model_files)
     args = mock_run.call_args[0][0]
     assert "--color" in args
@@ -169,7 +187,9 @@ def test_inpaint_color_flag(mock_find: MagicMock, mock_run: MagicMock, model_fil
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_no_color(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_no_color(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", color=False, **model_files)
     args = mock_run.call_args[0][0]
     assert "--color" not in args
@@ -218,7 +238,9 @@ def test_generate_no_verbose(mock_find: MagicMock, mock_run: MagicMock, model_fi
 
 @patch("pixel_alchemy.generation.sd_cli.subprocess.run")
 @patch("pixel_alchemy.generation.sd_cli._find_sd_cli", return_value=Path("/fake/sd-cli"))
-def test_inpaint_threads(mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]) -> None:
+def test_inpaint_threads(
+    mock_find: MagicMock, mock_run: MagicMock, model_files: dict[str, Path], image_files: dict[str, Path]
+) -> None:
     inpaint(init_image=image_files["reference"], mask=image_files["mask"], prompt="a dog", threads=16, **model_files)
     args = mock_run.call_args[0][0]
     assert "-t" in args

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Specialist pipeline tricks — a cookbook of reusable image-processing patterns.
 
 Each trick is self-contained and can be adapted to your own pipeline.
@@ -46,6 +45,7 @@ def already_processed(path: Path, output_suffix: str = "_pass2.png") -> bool:
 # Trick 2: Adaptive scale factor selection
 # ──────────────────────────────────────────────────────────────────────
 
+
 def choose_scale(width: int, target_width: int = 2000) -> int:
     """Pick the best scale factor (2, 3, or 4) to reach target_width.
 
@@ -61,6 +61,7 @@ def choose_scale(width: int, target_width: int = 2000) -> int:
 # ──────────────────────────────────────────────────────────────────────
 # Trick 3: Pre-downscale to destroy JPEG artifacts
 # ──────────────────────────────────────────────────────────────────────
+
 
 def downscale_destroy_artifacts(
     img: Image.Image,
@@ -83,6 +84,7 @@ def downscale_destroy_artifacts(
 # Trick 4: Gaussian blur before AI upscale
 # ──────────────────────────────────────────────────────────────────────
 
+
 def blur_before_upscale(
     img: Image.Image,
     radius: float = 1.5,
@@ -100,6 +102,7 @@ def blur_before_upscale(
 # ──────────────────────────────────────────────────────────────────────
 # Trick 5: Upscale high → downscale for detail refinement
 # ──────────────────────────────────────────────────────────────────────
+
 
 def upscale_then_refine(
     img_path: Path,
@@ -144,6 +147,7 @@ def upscale_then_refine(
 # Trick 6: Two-model sharpening (high-fidelity → ultrasharp)
 # ──────────────────────────────────────────────────────────────────────
 
+
 def two_model_sharpen(
     img_path: Path,
     output_path: Path,
@@ -185,6 +189,7 @@ def two_model_sharpen(
 # Trick 7: Double-pass unsharp mask
 # ──────────────────────────────────────────────────────────────────────
 
+
 def double_sharpen(img: Image.Image) -> Image.Image:
     """Two rounds of UnsharpMask with different radii for crisp detail.
 
@@ -203,6 +208,7 @@ def double_sharpen(img: Image.Image) -> Image.Image:
 # ──────────────────────────────────────────────────────────────────────
 # Trick 8: Async concurrency with semaphore
 # ──────────────────────────────────────────────────────────────────────
+
 
 async def process_batch_concurrent(
     images: list[Path],
@@ -228,6 +234,7 @@ async def process_batch_concurrent(
 # ──────────────────────────────────────────────────────────────────────
 # Trick 9: Inpainting to fix missing parts
 # ──────────────────────────────────────────────────────────────────────
+
 
 def inpaint_fix(
     init_image: Path,
@@ -290,6 +297,7 @@ def make_rectangle_mask(
 
     mask = Image.new("RGB", (w, h), "black")
     from PIL import ImageDraw
+
     draw = ImageDraw.Draw(mask)
     draw.rectangle(
         [int(w * x1_frac), int(h * y1_frac), int(w * x2_frac), int(h * y2_frac)],
@@ -302,6 +310,7 @@ def make_rectangle_mask(
 # ──────────────────────────────────────────────────────────────────────
 # Trick 10: Multi-pass inpainting for shading consistency
 # ──────────────────────────────────────────────────────────────────────
+
 
 def multi_pass_inpaint_shading(
     image: Path,
@@ -324,9 +333,15 @@ def multi_pass_inpaint_shading(
     # Pass 1: fill the region
     pass1_out = output.parent / f"{output.stem}_pass1.png"
     inpaint(
-        init_image=image, mask=mask, prompt=prompt_pass1,
-        diffusion_model=diffusion_model, vae=vae, llm=llm,
-        output=pass1_out, steps=9, cfg_scale=1.0,
+        init_image=image,
+        mask=mask,
+        prompt=prompt_pass1,
+        diffusion_model=diffusion_model,
+        vae=vae,
+        llm=llm,
+        output=pass1_out,
+        steps=9,
+        cfg_scale=1.0,
     )
 
     # Pass 2: shading fix (optional, use a different mask)
@@ -335,15 +350,22 @@ def multi_pass_inpaint_shading(
         w, h = img.size
     shade_mask = Image.new("RGB", (w, h), "black")
     from PIL import ImageDraw
+
     draw = ImageDraw.Draw(shade_mask)
     draw.rectangle([int(w * 0.65), int(h * 0.25), int(w * 0.95), int(h * 0.75)], fill="white")
     shade_mask_path = output.parent / f"{output.stem}_shade_mask.png"
     shade_mask.save(shade_mask_path)
 
     inpaint(
-        init_image=pass1_out, mask=shade_mask_path, prompt=prompt_pass2,
-        diffusion_model=diffusion_model, vae=vae, llm=llm,
-        output=output, steps=9, cfg_scale=1.0,
+        init_image=pass1_out,
+        mask=shade_mask_path,
+        prompt=prompt_pass2,
+        diffusion_model=diffusion_model,
+        vae=vae,
+        llm=llm,
+        output=output,
+        steps=9,
+        cfg_scale=1.0,
     )
 
     pass1_out.unlink(missing_ok=True)
@@ -354,6 +376,7 @@ def multi_pass_inpaint_shading(
 # Trick 11: Pipeline report generation
 # ──────────────────────────────────────────────────────────────────────
 
+
 def save_pipeline_report(results: list[dict], report_path: Path) -> None:
     """Save a JSON report with before/after stats for each image.
 
@@ -361,6 +384,7 @@ def save_pipeline_report(results: list[dict], report_path: Path) -> None:
     factors, and the pass sequence used.  Useful for batch auditing.
     """
     import json
+
     report_path.write_text(json.dumps(results, indent=2))
     print(f"Report saved: {report_path}")
 
@@ -368,6 +392,7 @@ def save_pipeline_report(results: list[dict], report_path: Path) -> None:
 # ──────────────────────────────────────────────────────────────────────
 # Trick 12: Multi-pass upscayl pipeline
 # ──────────────────────────────────────────────────────────────────────
+
 
 def multi_pass_upscayl_pipeline(
     input_path: Path,

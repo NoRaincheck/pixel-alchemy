@@ -15,10 +15,10 @@ def _sample_corners(arr: np.ndarray) -> list[tuple[int, int, int]]:
     h, w = arr.shape[:2]
     half = CORNER_PATCH_SIZE // 2
     corners = [
-        (0, 0),           # top-left
-        (0, w - 1),       # top-right
-        (h - 1, 0),       # bottom-left
-        (h - 1, w - 1),   # bottom-right
+        (0, 0),  # top-left
+        (0, w - 1),  # top-right
+        (h - 1, 0),  # bottom-left
+        (h - 1, w - 1),  # bottom-right
     ]
     result = []
     for y, x in corners:

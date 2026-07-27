@@ -1,6 +1,4 @@
-from pathlib import Path
-
-from pixel_alchemy.generation.sd_cli import edit, generate, inpaint
+from pixel_alchemy.generation.sd_cli import generate
 
 DM = "/Users/crn/.local/share/stable-diffusion.cpp/build/models/flux-2-klein-9b-Q4_0.gguf"
 VAE = "/Users/crn/.local/share/stable-diffusion.cpp/build/models/flux2_dev_diffusion_pytorch_model.safetensors"
