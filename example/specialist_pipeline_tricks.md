@@ -126,6 +126,52 @@ Track before/after stats for auditing:
 }
 ```
 
+### 13. Resize by shorter side
+
+When you care about the smaller dimension (thumbnails, mobile, or pre-downscale before AI), resize so the shorter side hits a target:
+
+```python
+img = resize_lanczos_to_shorter(img, shorter_target=480)
+# w, h scales proportionally so min(w, h) == 480
+```
+
+### 14. Compute target from min W and H constraints
+
+When you need output that satisfies both minimum width AND minimum height while preserving aspect ratio:
+
+```python
+target_w, target_h = compute_target(orig_w, orig_h, min_width=6600, min_height=3300)
+# Scales up just enough to meet both constraints
+```
+
+For a 22936×12800 image: `compute_target(22936, 12800, 6600, 3300)` → `(6600, 3683)`
+
+### 15. Full 5-pass pipeline for large JPEGs
+
+Ready-to-use pipeline for very large JPEGs with compression artifacts:
+
+```python
+from example.specialist_pipeline_tricks import large_jpeg_pipeline
+
+large_jpeg_pipeline(
+    input_path=Path("big-photo.jpg"),
+    output_path=Path("big-photo_enhanced.jpg"),
+    min_width=6600,
+    min_height=3300,
+)
+```
+
+Pipeline:
+```
+Original (22936×12800 JPEG)
+  → Pass 1: Downscale shorter side to ceil(target/4) via Lanczos
+  → Pass 2: Gaussian blur radius=1.5
+  → Pass 3: upscayl digital-art-4x scale=4
+  → Pass 4: Downscale to exact target (6600×3683) via Lanczos
+  → Pass 5: Double unsharp mask (0.8, 0.4)
+Output: 6600×3683 JPEG (95% quality)
+```
+
 ---
 
 ## Model Selection Cheat Sheet

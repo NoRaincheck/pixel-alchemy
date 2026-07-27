@@ -447,6 +447,114 @@ def multi_pass_upscayl_pipeline(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Trick 13: Resize by shorter side
+# ──────────────────────────────────────────────────────────────────────
+
+
+def resize_lanczos_to_shorter(img: Image.Image, shorter_target: int) -> Image.Image:
+    """Resize so the shorter side equals shorter_target, aspect preserved.
+
+    Useful when you care about the smaller dimension (e.g. thumbnails,
+    mobile constraints, or pre-downscale before AI upscale).  The longer
+    side scales proportionally.
+
+    """
+    w, h = img.size
+    shorter = min(w, h)
+    scale = shorter_target / shorter
+    new_w, new_h = round(w * scale), round(h * scale)
+    return img.resize((new_w, new_h), Image.LANCZOS)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Trick 14: Compute target dimensions from minimum W and H constraints
+# ──────────────────────────────────────────────────────────────────────
+
+
+def compute_target(orig_w: int, orig_h: int, min_width: int, min_height: int) -> tuple[int, int]:
+    """Scale up to meet both min width and min height constraints.
+
+    Computes the smallest uniform scale that satisfies both minimums
+    while preserving aspect ratio.
+
+    """
+    scale = max(min_width / orig_w, min_height / orig_h)
+    target_w = max(round(orig_w * scale), min_width)
+    target_h = max(round(orig_h * scale), min_height)
+    return target_w, target_h
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Trick 15: Full 5-pass pipeline for large JPEGs
+# ──────────────────────────────────────────────────────────────────────
+
+
+def large_jpeg_pipeline(
+    input_path: Path,
+    output_path: Path,
+    *,
+    min_width: int = 6600,
+    min_height: int = 3300,
+    blur_radius: float = 1.5,
+    model: str = "digital-art-4x",
+    upscale_scale: int = 4,
+) -> Path:
+    """5-pass pipeline optimized for very large JPEGs with compression artifacts.
+
+    Originals may be 20000px+ JPEGs with heavy compression artifacts.
+
+      Pass 1 — Downscale so shorter side = ceil(target_shorter/4) via Lanczos.
+      Pass 2 — Gaussian blur (radius=1.5) to smooth noise before AI.
+      Pass 3 — Upscale with upscayl (digital-art-4x, scale=4).
+      Pass 4 — Downscale to exact target dimensions via Lanczos.
+      Pass 5 — Double unsharp mask (broad + fine sharpening).
+
+    """
+    from pixel_alchemy.super_resolution.upscayl import upscayl
+
+    with Image.open(input_path) as orig:
+        orig_w, orig_h = orig.size
+
+    target_w, target_h = compute_target(orig_w, orig_h, min_width, min_height)
+    target_shorter = min(target_w, target_h)
+    intermediate = (target_shorter + 3) // 4
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+
+        # Pass 1: downscale to destroy JPEG artifacts
+        with Image.open(input_path) as img:
+            if img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            downsampled = resize_lanczos_to_shorter(img, intermediate)
+        pass1 = tmp / "pass1.jpg"
+        downsampled.save(pass1, "JPEG", quality=95, optimize=True)
+
+        # Pass 2: blur to smooth noise
+        img = Image.open(pass1).convert("RGB")
+        blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        pass2 = tmp / "pass2.jpg"
+        blurred.save(pass2, "JPEG", quality=95, optimize=True)
+
+        # Pass 3: AI upscale
+        pass3 = tmp / "pass3.png"
+        upscayl(pass2, pass3, model=model, scale=upscale_scale, format="png")
+
+        # Pass 4: downscale to exact target
+        img = Image.open(pass3).convert("RGB")
+        refined = img.resize((target_w, target_h), Image.LANCZOS)
+
+        # Pass 5: double sharpen
+        refined = refined.filter(ImageFilter.UnsharpMask(radius=0.8, percent=120, threshold=2))
+        refined = refined.filter(ImageFilter.UnsharpMask(radius=0.4, percent=80, threshold=3))
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        refined.save(output_path, "JPEG", quality=95, optimize=True)
+
+    return output_path
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Summary of model choices
 # ──────────────────────────────────────────────────────────────────────
 
