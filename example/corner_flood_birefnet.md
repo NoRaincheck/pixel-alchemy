@@ -31,7 +31,7 @@ The flood fill tolerance is not fixed. It is **binary searched per image** for t
 Sample the four corners, pick the most common color (majority vote), then compute the Euclidean distance from every pixel to that color:
 
 ```python
-diff = np.sqrt((r - bg_color[0])**2 + (g - bg_color[1])**2 + (b - bg_color[2])**2)
+diff = np.sqrt((r - bg_color[0]) ** 2 + (g - bg_color[1]) ** 2 + (b - bg_color[2]) ** 2)
 ```
 
 This is the expensive part (per-pixel sqrt), so it is done **once** per image.

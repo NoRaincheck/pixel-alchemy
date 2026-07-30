@@ -53,9 +53,7 @@ def _compute_diff_and_seeds(img: Image.Image):
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
     bg_color = _corner_color(_sample_corners(arr))
 
-    diff = np.sqrt(
-        (r - bg_color[0]) ** 2 + (g - bg_color[1]) ** 2 + (b - bg_color[2]) ** 2
-    )
+    diff = np.sqrt((r - bg_color[0]) ** 2 + (g - bg_color[1]) ** 2 + (b - bg_color[2]) ** 2)
     h, w = arr.shape[:2]
     seeds = [(1, 1), (h + 1, 1), (1, w + 1), (h + 1, w + 1)]
     return diff, seeds
