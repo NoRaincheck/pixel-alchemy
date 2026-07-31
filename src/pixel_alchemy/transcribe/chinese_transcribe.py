@@ -174,9 +174,13 @@ def _transcribe_chunk(cli: Path, model_path: Path, wav_path: Path) -> str:
             "--timestamps", "none",
             str(wav_path),
         ],
-        check=True,
         capture_output=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"transcribe-cli failed (exit {result.returncode}) on {wav_path.name}:\n"
+            f"{result.stderr.decode()}"
+        )
     stdout = result.stdout.decode()
     for line in stdout.splitlines():
         if line.startswith("text:"):
@@ -237,7 +241,10 @@ def transcribe_chinese(
                 raw = ""
                 for i, chunk in enumerate(chunk_paths):
                     print(f"  [stage] Transcribing chunk {i+1}/{len(chunk_paths)}...")
-                    raw += _transcribe_chunk(cli, model_path, chunk)
+                    try:
+                        raw += _transcribe_chunk(cli, model_path, chunk)
+                    except Exception as e:
+                        print(f"  [warn] Skipping chunk {i+1}: {e}")
             finally:
                 for p in chunk_paths:
                     p.unlink(missing_ok=True)
