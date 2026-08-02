@@ -14,4 +14,3 @@ for seg in result["segments"]:
     print(f"[{seg['start']:.1f}-{seg['end']:.1f}] {seg['speaker']}: {seg['text']}")
     if "translated_text" in seg:
         print(f"  -> {seg['translated_text']}")
-

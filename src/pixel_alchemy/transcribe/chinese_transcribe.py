@@ -61,9 +61,13 @@ def _get_duration_s(wav_path: Path) -> float:
     """Get audio duration in seconds via ffprobe."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(wav_path),
         ],
         check=True,
@@ -79,12 +83,14 @@ def _detect_silence(wav_path: Path) -> list[float]:
     """
     result = subprocess.run(
         [
-            "ffmpeg", "-i", str(wav_path),
-            "-af", (
-                f"silencedetect=noise={SILENCE_THRESHOLD_DB}dB"
-                f":duration={SILENCE_MIN_DURATION_S}"
-            ),
-            "-f", "null", "-",
+            "ffmpeg",
+            "-i",
+            str(wav_path),
+            "-af",
+            (f"silencedetect=noise={SILENCE_THRESHOLD_DB}dB:duration={SILENCE_MIN_DURATION_S}"),
+            "-f",
+            "null",
+            "-",
         ],
         check=True,
         capture_output=True,
@@ -130,11 +136,16 @@ def _split_wav(wav_path: Path, chunks_dir: Path, ranges: list[tuple[float, float
         out = chunks_dir / f"chunk_{i:04d}.wav"
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-i", str(wav_path),
-                "-ss", str(start),
-                "-to", str(end),
-                "-c", "copy",
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(wav_path),
+                "-ss",
+                str(start),
+                "-to",
+                str(end),
+                "-c",
+                "copy",
                 str(out),
             ],
             check=True,
@@ -149,12 +160,14 @@ def _parse_diarized_output(raw: str) -> list[dict]:
     pattern = re.compile(r"\[(\d+(?:\.\d+)?)\]\[(S\d+)\](.*?)\[(\d+(?:\.\d+)?)\]")
     segments = []
     for m in pattern.finditer(raw):
-        segments.append({
-            "start": float(m.group(1)),
-            "speaker": m.group(2),
-            "text": m.group(3).strip(),
-            "end": float(m.group(4)),
-        })
+        segments.append(
+            {
+                "start": float(m.group(1)),
+                "speaker": m.group(2),
+                "text": m.group(3).strip(),
+                "end": float(m.group(4)),
+            }
+        )
     return segments
 
 
@@ -168,23 +181,25 @@ def _transcribe_chunk(cli: Path, model_path: Path, wav_path: Path) -> str:
     result = subprocess.run(
         [
             str(cli),
-            "-m", str(model_path),
-            "-l", "zh",
+            "-m",
+            str(model_path),
+            "-l",
+            "zh",
             "-q",
-            "--timestamps", "none",
+            "--timestamps",
+            "none",
             str(wav_path),
         ],
         capture_output=True,
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"transcribe-cli failed (exit {result.returncode}) on {wav_path.name}:\n"
-            f"{result.stderr.decode()}"
+            f"transcribe-cli failed (exit {result.returncode}) on {wav_path.name}:\n{result.stderr.decode()}"
         )
     stdout = result.stdout.decode()
     for line in stdout.splitlines():
         if line.startswith("text:"):
-            return line[len("text:"):].strip()
+            return line[len("text:") :].strip()
     return ""
 
 
@@ -240,11 +255,11 @@ def transcribe_chinese(
             try:
                 raw = ""
                 for i, chunk in enumerate(chunk_paths):
-                    print(f"  [stage] Transcribing chunk {i+1}/{len(chunk_paths)}...")
+                    print(f"  [stage] Transcribing chunk {i + 1}/{len(chunk_paths)}...")
                     try:
                         raw += _transcribe_chunk(cli, model_path, chunk)
                     except Exception as e:
-                        print(f"  [warn] Skipping chunk {i+1}: {e}")
+                        print(f"  [warn] Skipping chunk {i + 1}: {e}")
             finally:
                 for p in chunk_paths:
                     p.unlink(missing_ok=True)
@@ -304,9 +319,9 @@ def translate_segments(
 
         translated_text = body["choices"][0]["message"]["content"].strip()
         translated.append({**seg, "translated_text": translated_text})
-        print(f"  [stage] Translated segment {i+1}/{len(segments)}")
+        print(f"  [stage] Translated segment {i + 1}/{len(segments)}")
 
-    print(f"  [stage] Translation done")
+    print("  [stage] Translation done")
     return translated
 
 
@@ -329,7 +344,5 @@ def transcribe_and_translate(
         {"full_text": "...", "segments": [{"start", "end", "speaker", "text", "translated_text"}, ...]}
     """
     result = transcribe_chinese(audio_path, model_path)
-    result["segments"] = translate_segments(
-        result["segments"], endpoint=endpoint, model=model
-    )
+    result["segments"] = translate_segments(result["segments"], endpoint=endpoint, model=model)
     return result
