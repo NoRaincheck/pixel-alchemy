@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "huggingface_hub>=0.20.0",
+    "img2pdf>=0.6.3",
     "onnx>=1.22.0",
     "onnxruntime>=1.27.0",
     "opencv-python-headless>=5.0.0.93",
