@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "python-docx>=1.2.0",
+# ]
+# ///
 """Clean images out of docx/zip archives and compress PDFs, preserving quality.
 
 Archive handling (no external binaries needed):
@@ -9,10 +15,15 @@ Archive handling (no external binaries needed):
     (<w:drawing>, <w:pict>, <w:object>, pic:pic, ...) and prunes the matching
     relationship entries out of every .rels file.  Deleting media blobs without
     this step leaves dangling relationship IDs, which Word flags as corrupt.
+  * docx files are reduced to the main body text: document metadata
+    (docProps/*), tracked-change/versioning markup (w:ins/w:del, rsid*
+    attributes, trackChanges.xml, people.xml, comments), headers, footers,
+    footnotes, endnotes, and embedded objects/media are all dropped.  Inserted
+    text is accepted and deleted text removed, so the final accepted text stays.
   * Nested archives (docx/zips inside zips, zips inside docx) are cleaned
     recursively with a depth limit, preserving the outer archive's structure.
-  * Untouched entries pass through byte-identical; archives with no images are
-    left exactly as they were.
+  * Untouched entries pass through byte-identical; archives with nothing to
+    remove are left exactly as they were.
 
 PDF compression (uses Ghostscript if installed, otherwise skipped):
   * Re-encodes with pdfwrite at a configurable quality preset. The default
@@ -56,6 +67,52 @@ STRIP_TAGS = {
     f"{{{PICTURE_NS}}}pic",
     f"{{{DRAWING_NS}}}blip",
     f"{{{VML_NS}}}imagedata",
+}
+
+# Non-body parts of a docx that add bulk/history without contributing the
+# main text: metadata, revision/comment tracking, headers/footers, footnotes,
+# and embedded media/objects.
+DOCX_DROP_DIRS = {"media", "charts", "embeddings", "activex"}
+DOCX_DROP_STEMS = {
+    "footnotes.xml", "endnotes.xml", "people.xml", "trackchanges.xml",
+    "custom.xml",
+}
+
+# Tracked-change/comment markers inside word/document.xml.  Insertions are
+# kept (their text is accepted) while deletions and annotation plumbing are
+# removed, so only the final accepted text remains.
+REVISION_UNWRAP_TAGS = {
+    f"{{{WORD_NS}}}ins",
+    f"{{{WORD_NS}}}moveTo",
+}
+REVISION_DROP_TAGS = {
+    f"{{{WORD_NS}}}del",
+    f"{{{WORD_NS}}}moveFrom",
+    f"{{{WORD_NS}}}moveToRangeStart",
+    f"{{{WORD_NS}}}moveToRangeEnd",
+    f"{{{WORD_NS}}}moveFromRangeStart",
+    f"{{{WORD_NS}}}moveFromRangeEnd",
+    f"{{{WORD_NS}}}commentRangeStart",
+    f"{{{WORD_NS}}}commentRangeEnd",
+    f"{{{WORD_NS}}}commentReference",
+    f"{{{WORD_NS}}}footnoteReference",
+    f"{{{WORD_NS}}}endnoteReference",
+    f"{{{WORD_NS}}}headerReference",
+    f"{{{WORD_NS}}}footerReference",
+    f"{{{WORD_NS}}}rPrChange",
+    f"{{{WORD_NS}}}pPrChange",
+    f"{{{WORD_NS}}}sectPrChange",
+    f"{{{WORD_NS}}}trPrChange",
+    f"{{{WORD_NS}}}tcPrChange",
+    f"{{{WORD_NS}}}cellIns",
+    f"{{{WORD_NS}}}cellDel",
+    f"{{{WORD_NS}}}cellMerge",
+}
+
+# History/settings in word/settings.xml that don't affect the text.
+SETTINGS_STRIP_TAGS = {
+    f"{{{WORD_NS}}}trackChanges",
+    f"{{{WORD_NS}}}rsids",
 }
 
 _NAMESPACES = {
@@ -106,6 +163,21 @@ def is_image(name: str) -> bool:
     return ext in IMAGE_EXTS
 
 
+def should_drop_docx_part(name: str) -> bool:
+    """True if the part is docx bulk that isn't needed for the main text."""
+    lower = name.lower()
+    if lower.startswith("docprops/"):
+        return True
+    if not lower.startswith("word/"):
+        return False
+    rel = lower[len("word/"):]
+    if rel.split("/", 1)[0] in DOCX_DROP_DIRS:
+        return True
+    stem = rel.rsplit("/", 1)[-1]
+    return (stem.startswith("header") or stem.startswith("footer")
+            or stem.startswith("comments") or stem in DOCX_DROP_STEMS)
+
+
 def _remove_all(el, tags):
     removed = 0
     for child in list(el):
@@ -136,7 +208,7 @@ def rels_base_dir(name: str) -> str:
     return "/".join(parts[:i])
 
 
-def strip_image_rels(raw: bytes, name: str):
+def strip_rels(raw: bytes, name: str, drop_targets: set):
     base = rels_base_dir(name)
     try:
         root = ET.fromstring(raw)
@@ -148,10 +220,81 @@ def strip_image_rels(raw: bytes, name: str):
             continue
         target = rel.get("Target") or ""
         resolved = posixpath.normpath(posixpath.join(base, target.lstrip("/")))
-        if is_image(resolved):
+        if is_image(resolved) or resolved in drop_targets:
             root.remove(rel)
             removed += 1
     if removed == 0:
+        return raw, False
+    return ET.tostring(root, encoding="UTF-8", xml_declaration=True), True
+
+
+def strip_content_types(raw: bytes, drop_targets: set):
+    """Prune [Content_Types].xml Override entries for removed parts."""
+    if not drop_targets:
+        return raw, False
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return raw, False
+    removed = 0
+    for child in list(root):
+        if not child.tag.endswith("}Override"):
+            continue
+        part = (child.get("PartName") or "").lstrip("/")
+        if posixpath.normpath(part) in drop_targets:
+            root.remove(child)
+            removed += 1
+    if removed == 0:
+        return raw, False
+    return ET.tostring(root, encoding="UTF-8", xml_declaration=True), True
+
+
+def _strip_revision_elems(el):
+    removed = 0
+    for child in list(el):
+        if child.tag in REVISION_UNWRAP_TAGS:
+            kids = list(child)
+            idx = list(el).index(child)
+            el.remove(child)
+            for k in reversed(kids):
+                el.insert(idx, k)
+            removed += 1
+            for k in kids:
+                removed += _strip_revision_elems(k)
+        elif child.tag in REVISION_DROP_TAGS:
+            el.remove(child)
+            removed += 1
+        else:
+            removed += _strip_revision_elems(child)
+    return removed
+
+
+def strip_revisions(raw: bytes):
+    """Accept insertions, drop deletions/comments and rsid history."""
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return raw, False
+    changed = False
+    for el in root.iter():
+        for attr in list(el.attrib):
+            if attr.startswith(f"{{{WORD_NS}}}rsid"):
+                del el.attrib[attr]
+                changed = True
+    if _strip_revision_elems(root):
+        changed = True
+    if not changed:
+        return raw, False
+    return ET.tostring(root, encoding="UTF-8", xml_declaration=True), True
+
+
+def strip_settings_xml(raw: bytes):
+    """Remove track-changes/history settings from word/settings.xml."""
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return raw, False
+    if _remove_all(root, SETTINGS_STRIP_TAGS) == 0:
         return raw, False
     return ET.tostring(root, encoding="UTF-8", xml_declaration=True), True
 
@@ -163,13 +306,26 @@ def clean_archive_bytes(data: bytes, depth: int, gs_path: str = None,
         return data, False
 
     changed = False
+    docx_archive = False
+    drop_targets = set()
     entries = []
     with zipfile.ZipFile(io.BytesIO(data), "r") as zin:
         comment = zin.comment
-        for info in zin.infolist():
+        infos = list(zin.infolist())
+        if any(i.filename.lower() == "word/document.xml" for i in infos):
+            docx_archive = True
+            for i in infos:
+                if should_drop_docx_part(i.filename):
+                    drop_targets.add(posixpath.normpath(i.filename))
+                    changed = True
+        for info in infos:
             name = info.filename
             lower = name.lower()
+            norm = posixpath.normpath(name)
             raw = zin.read(info)
+
+            if norm in drop_targets:
+                continue
 
             # Nested archive: recurse, keep the cleaned bytes.
             if depth < MAX_DEPTH and (lower.endswith(".docx") or lower.endswith(".zip")):
@@ -186,14 +342,29 @@ def clean_archive_bytes(data: bytes, depth: int, gs_path: str = None,
                 cleaned, sub = compress_pdf_bytes(raw, pdf_quality, gs_path)
                 if sub:
                     raw, changed = cleaned, True
-            # XML part: strip drawing/image elements.
+            # Package content types: prune entries for removed parts.
+            elif lower == "[content_types].xml":
+                cleaned, sub = strip_content_types(raw, drop_targets)
+                if sub:
+                    raw, changed = cleaned, True
+            # XML part: strip drawing/image elements, plus (in docx) the
+            # tracked-change/comment markup so only the final text remains.
             elif lower.endswith(".xml"):
                 cleaned, sub = strip_xml_references(raw)
                 if sub:
                     raw, changed = cleaned, True
-            # Relationship part: drop image relationships.
+                if docx_archive:
+                    if lower == "word/document.xml":
+                        cleaned, sub = strip_revisions(raw)
+                    elif lower == "word/settings.xml":
+                        cleaned, sub = strip_settings_xml(raw)
+                    else:
+                        cleaned, sub = None, False
+                    if sub:
+                        raw, changed = cleaned, True
+            # Relationship part: drop image + removed-part relationships.
             elif lower.endswith(".rels"):
-                cleaned, sub = strip_image_rels(raw, name)
+                cleaned, sub = strip_rels(raw, name, drop_targets)
                 if sub:
                     raw, changed = cleaned, True
 
@@ -340,7 +511,8 @@ def compress_pdf_bytes(data: bytes, profile: str, gs_path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Strip images from docx/zip archives and compress PDFs.")
+        description="Strip images and history from docx/zip archives and "
+                    "compress PDFs.")
     parser.add_argument("--dir", default=".", help="directory to scan (default: current)")
     parser.add_argument("--dry-run", action="store_true", help="report only, don't rewrite")
     parser.add_argument("--pdf-quality", choices=sorted(PDF_QUALITY),
