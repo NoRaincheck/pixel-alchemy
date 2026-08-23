@@ -1,123 +1,136 @@
 # pdfx1a-compress
 
-Make a print-ready **PDF/X-1a** that is as small as the artwork allows,
-fully reproducible.
+Turn any print PDF into a **conforming, reproducible PDF/X-1a (CMYK)** that is
+as small as the artwork allows.
 
 ```
-./pdfx1a_compress.py compress INPUT.pdf OUTPUT.pdf
+./pdfx1a_compress.py compress INPUT.pdf OUTPUT.pdf [options]
 ./pdfx1a_compress.py verify   OUTPUT.pdf
 ```
 
-## What it does
+## Quick start
 
-### Modes
+```sh
+# already-CMYK book — keep pixels untouched, add real PDF/X-1a conformance
+./pdfx1a_compress.py compress book_cmyk.pdf out.pdf
 
-| mode | invocation | image handling |
-|---|---|---|
-| lossless (default) | `compress in.pdf out.pdf` | pixels untouched; `jpegtran -optimize` only, kept if smaller |
-| lossy, configurable | `compress in.pdf out.pdf --quality p90` | Pillow re-encode at quality 10..95 (`pNN` or plain int); kept only if smaller |
-| lossy + chroma tradeoff | `... --quality p75 --subsampling auto` | also tries C-channel 4:2:2 / 4:2:0; `auto` keeps whichever is smaller |
+# RGB book — auto-converts to DeviceCMYK, then optimises (default q80 + 4:2:2 auto)
+./pdfx1a_compress.py compress book_rgb.pdf out.pdf
 
-`--subsampling` choices: `none` (default, max colour fidelity), `422`, `420`,
-`auto`. Only the **C** channel is ever subsampled — M, Y and K stay
-full-resolution (matches Adobe CMYK JPEG convention).
+# explicit quality ladder
+./pdfx1a_compress.py compress in.pdf out.pdf --quality p90            # finest
+./pdfx1a_compress.py compress in.pdf out.pdf --quality p75 --subsampling auto   # smallest
 
-A candidate always replaces the current best only when it is *strictly smaller*;
-otherwise the original bytes are kept and reported. If nothing shrinks you get:
-
-```
-note            : no image got smaller at this quality — the originals were
-                  already better compressed. Try a lower --quality or --subsampling auto/422/420.
+# check the result
+./pdfx1a_compress.py verify out.pdf
 ```
 
+## Modes
 
-Why so conservative? This pipeline was benchmarked against the alternative on a
-real Quartz-produced book (99 full-page 300 dpi DeviceCMYK JPEGs):
-
-| method | size vs original JPEGs |
+| situation | what happens |
 |---|---|
-| Ghostscript re-encode, QFactor 0.15 / 0.40 / 0.90 | 236% / 164% / 109% |
-| Pillow re-encode q90 / q80 / q75 (4:4:4) | 167% / 132% / 121% |
-| Pillow q70–80 with 4:2:2 chroma subsampling | 76–96% (visible colour softening) |
-| `jpegtran -optimize` (this tool) | **~97.5% — pixel-identical** |
+| input is colour-clean (CMYK/Gray only) | finalised directly; **pixels untouched** unless `--quality` given |
+| input has RGB/Lab images, RGB fills or transparency | **automatic Ghostscript stage** converts everything to DeviceCMYK (fonts embedded, transparency flattened, images re-encoded as JPEG @300 dpi) |
+| after any conversion | the size optimiser always runs — default `--quality 80 --subsampling auto` unless you pass `--quality` explicitly (conversion is already a lossy generation, so keeping Ghostscript's large streams verbatim buys nothing) |
 
-Apple's Quartz encoder already produces near-optimal CMYK JPEGs, so a plain
-re-encode (`--quality p90` … `p70`, 4:4:4) either grows the file or costs
-fidelity. Real size cuts on this class of input come from `--quality` **plus**
-`--subsampling auto`. If you explicitly want the size cut and accept softer
-C-channel colour:
+### Image optimisation
 
-```
-./pdfx1a_compress.py compress in.pdf out.pdf --quality p75 --subsampling auto
-```
+* `jpegtran -optimize` pass for every JPEG — **lossless**, kept only if smaller.
+* With `--quality pNN` (or an int 10–95): Pillow re-encode candidates; a
+  candidate replaces the current best **only when strictly smaller**. Nothing
+  is degraded without a size win; if nothing shrinks you get an honest note.
+* `--subsampling none|422|420|auto` — chroma subsampling of the **C channel
+  only**; M, Y and K stay full-resolution (Adobe CMYK JPEG convention).
+  `auto` tries all and keeps whichever is smallest.
 
-### PDF/X-1a conformance injection
-The source "PDFX" file exported by macOS Quartz is usually *not* conforming.
-This tool adds everything ISO 15930-1 requires that is missing:
+Why so conservative on already-CMYK input? Benchmarks against Quartz-produced
+books show Apple's JPEG encoder is near-optimal: every full-quality re-encode
+(Ghostscript QFactor 0.15/0.40/0.90, Pillow q90/q80/q75 at 4:4:4) produced
+**larger** files than the originals (109–236%). Only C-channel subsampling
+actually shrinks them (−15…−35%), at the cost of some colour sharpness.
 
-* `/TrimBox` = `/MediaBox` on every page (required; X-1a has no bleed concept here)
-* Output intent: `/OutputIntents [ ... ]`, `/S /GTS_PDFX`,
-  `DestOutputProfile` = vendored CMYK ICC profile (`vendor/default_cmyk.icc`,
-  N=4), `OutputConditionIdentifier` (default `CGATS TR001`, override with
-  `--condition-id`; swap the ICC for your printer's, e.g. FOGRA39/GRACoL, via `--icc`)
-* Info dict: `GTS_PDFXVersion (PDF/X-1a:2001)` (`:2003` optional),
-  `/Trapped /False`, `CreationDate`, `ModDate`
+## What "PDF/X-1a" gets injected
+
+The finaliser adds everything ISO 15930-1 requires that is missing:
+
+* `/TrimBox` = `/MediaBox` on every page
+* Output intent `/OutputIntents` with `/S /GTS_PDFX`, CMYK ICC profile
+  (`vendor/default_cmyk.icc`, N=4), `OutputConditionIdentifier`
+  (`--condition-id`, default `CGATS TR001`; swap in your printer's profile via
+  `--icc`, e.g. FOGRA39 or GRACoL)
+* Info dict: `GTS_PDFXVersion (PDF/X-1a:2001)` (or `:2003`),
+  `/Trapped /False`, pinned `CreationDate`/`ModDate`
 * XMP metadata consistent with the Info dict (`pdfxid:GTS_PDFXVersion`, dates,
   document/instance UUIDs)
-* Document colour audit: refuses content with RGB operators, transparency,
-  or RGB images (PDF/X-1a forbids them). Documents that need *conversion*
-  should first be run through Ghostscript:
-  `gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dPDFX=1 -sColorConversionStrategy=CMYK -dProcessColorModel=/DeviceCMYK -o flat.pdf in.pdf`
-  then finalise `flat.pdf` with this tool.
+
+Colour rules are enforced, not assumed: the built-in audit refuses content
+with RGB operators, transparency or RGB images — that content is exactly what
+triggers the automatic conversion stage.
 
 ## Reproducibility
 
-Same input bytes + same options + same toolchain ⇒ **byte-identical output**
-(no wall-clock timestamps anywhere).
+Same input bytes + same options + same toolchain ⇒ **byte-identical output**.
 
-* Object order, whitespace, xref layout are canonicalised.
-* `/ID`, XMP `DocumentID`/`InstanceID` are derived from SHA-256 of the input.
-* Dates resolve in a fixed order: `--date D:YYYYMMDDHHMMSSZ` >
-  `SOURCE_DATE_EPOCH` env var > the source file's own CreationDate > fixed epoch.
+* canonical object order / whitespace / xref layout,
+* document & instance IDs derived from SHA-256 of the *input* file,
+* dates resolved deterministically: `--date D:YYYYMMDDHHMMSSZ` >
+  `SOURCE_DATE_EPOCH` > the source's own CreationDate > fixed epoch —
+  never the wall clock, even when Ghostscript runs as a stage.
+
+Verified by double-run MD5 comparison on all reference books, including the
+Ghostscript-conversion path.
 
 ## Verify
 
 ```
-./pdfx1a-compress verify out.pdf
+./pdfx1a_compress.py verify out.pdf
 ```
-Checks header version, output intent (+ICC `acsp`, N=4), Info & XMP
+
+Checks header version, output intent (+ICC `acsp` magic, N=4), Info/XMP
 consistency, TrimBox on every page, font embedding, absence of RGB operators /
-transparency / RGB images, CMYK-ness of large images, ≥295 dpi, and runs
+transparency / RGB images, CMYK-ness of all large images, ≥295 dpi, plus
 `qpdf --check` when installed. Exit code 0 = conforming.
 
 Note: Apple-produced JPEGs sometimes contain padded entropy segments;
-strict libjpeg-based checkers (e.g. `qpdf`) emit warnings about them even on
-the untouched original. Tolerant decoders (Preview/Acrobat/poppler/Ghostscript)
-read them fine. The verify step reports this as a WARN, not a failure.
+strict libjpeg-based tools (`qpdf`) warn about them even on untouched
+originals. Preview/Acrobat/poppler/Ghostscript read them fine — verify
+reports this as WARN, not FAIL.
 
 ## Dependencies
 
-* `python3` — stdlib only for the core pipeline
-* `jpegtran` (libjpeg-turbo) — enables the lossless savings; auto-detected,
-  gracefully skipped with `--no-jpeg-opt`
-* `Pillow` — only for `--quality` / lossy re-encoding
-* `qpdf`, poppler (`pdfimages`) — optional extras for `verify`
+| tool | needed for |
+|---|---|
+| python3 (stdlib) | core pipeline & verify |
+| ghostscript | automatic RGB→CMYK conversion stage |
+| jpegtran (libjpeg-turbo) | lossless savings (auto-detected, optional) |
+| Pillow | `--quality` lossy mode & converted-input optimisation |
+| qpdf, poppler-utils | extra checks in `verify` |
 
-Tested with: python 3.9, jpegtran/libjpeg-turbo 3.x, Pillow 11.3, qpdf 12.4.
+Tested with: python 3.9, Ghostscript 10.07.1, libjpeg-turbo 3.x,
+Pillow 11.3, qpdf 12.4, mutool 1.28 (macOS 15, arm64).
 
-## Results on the reference book
+## Results on the reference books
 
-`grandpa_allthelittle_pdfx.pdf` (100 pages, 300 dpi DeviceCMYK, 127,526,089 bytes):
+All outputs CONFORMING PDF/X-1a:2001, pages still 1838×2775 px @ 300 dpi.
 
-| output | command | size | delta |
+| input | command | output size | delta |
 |---|---|---|---|
-| `…_pdfx1a_compressed.pdf` | *(lossless default)* | 124,863,161 B | **−2.09 %** |
-| `…_pdfx1a_p75.pdf` | `--quality p75 --subsampling auto` | 83,410,108 B | **−34.59 %** |
+| `grandpa_allthelittle_pdfx.pdf` (127.5 MB, CMYK) | *(lossless)* | 124.9 MB | −2.09 % |
+| `grandpa_allthelittle_pdfx.pdf` | `--quality p75 --subsampling auto` | 83.4 MB | −34.59 % |
+| `grandpa_allthelittle.pdf` (55.3 MB, **RGB**) | *(auto-convert, default q80+auto)* | 91.2 MB | +64.9 %¹ |
+| `grandpa_allthelittle.pdf` | *(auto-convert)* `--quality p75 --subsampling auto` | 82.9 MB | +49.9 %¹ |
 
-Both are CONFORMING PDF/X-1a:2001 (0 failures), still 1838×2775 px @ 300 dpi
-CMYK per page; the p75 variant trades C-channel resolution for size.
-Lossless run: ~12 s; p75 run: ~35 s.
-The honest takeaway: this book was already within ~2% of the smallest possible
-file at 300 dpi full-quality CMYK. The tool guarantees it stays print-safe
-(real PDF/X-1a conformance it previously lacked) while shaving what is
-available losslessly — and documents exactly how much more compression would cost.
+¹ Growth is inherent: RGB→CMYK adds a 4th channel (~+33 % raw pixels) plus a
+print-grade re-encode. Colour fidelity of the conversion was checked by
+render-diffing: RMSE ≈ 1–3 of 255 per channel vs the RGB original.
+Typical runtimes: ~12 s lossless finalisation, ~2.5 min with conversion
+(100 pages).
+
+## Limitations
+
+* Parser targets classic-xref PDFs (no object streams / encryption). Inputs
+  using newer structures are routed through the Ghostscript stage automatically,
+  which normalises them first.
+* Conversion uses Ghostscript's colour management into the *output intent*
+  profile family; for exact press targeting, supply your printer's ICC with
+  `--icc` and matching `--condition-id`.
