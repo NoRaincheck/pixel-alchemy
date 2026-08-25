@@ -5,10 +5,6 @@ description: Combine folders of images (PNG/JPEG) into print-ready PDFs at a giv
 
 # Images to PDF
 
-Generalizes the various `images-to-pdfs.py` / `build-pdf.py` / `create_pdfs.py`
-/ `make_double_spread_pdf.py` / `combine_to_pdf.py` scripts scattered around
-the repo.
-
 Images are naturally sorted and become one page each. With a page size given,
 each image is resized to the exact page pixels; without one, pages take each
 image's own size at `--dpi`.
@@ -38,4 +34,4 @@ image's own size at `--dpi`.
 | `--dpi N` | `300` | DPI for page sizing and PDF metadata |
 | `--quality Q` | `95` | JPEG quality inside the PDF |
 
-Requires Pillow (already a repo dependency).
+Requires Pillow.

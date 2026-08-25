@@ -5,8 +5,7 @@ description: Compose print book cover spreads by placing front and back cover im
 
 # Cover Compose
 
-Generalized from `book/portrait/generate_covers.py` (and its `square` twin):
-for each entry in a metadata JSON and each template PNG, produces a composed
+For each entry in a metadata JSON and each template PNG, produces a composed
 cover with the **back** image filling the area left of the spine and the
 **front** image covering from the spine rightwards.
 
@@ -32,4 +31,4 @@ Metadata format (paths relative to the metadata file):
 Outputs `<output>/<front-stem>_<template-stem>.png` for every entry x template
 combination, skipping entries whose images are missing.
 
-Requires Pillow + numpy (already repo dependencies).
+Requires Pillow + numpy.

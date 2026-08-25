@@ -6,6 +6,9 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import shutil
+import subprocess
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Literal
 
@@ -13,13 +16,28 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 
-try:
-    from pixel_alchemy.super_resolution.upscayl import upscayl
-except ImportError:
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
-    from pixel_alchemy.super_resolution.upscayl import upscayl
+def _model_dir() -> Path:
+    binary = shutil.which("upscayl-bin")
+    if not binary:
+        raise SystemExit("upscayl-bin not found on PATH")
+    models = Path(binary).resolve().parent / "models"
+    if not models.is_dir():
+        raise SystemExit(f"models dir not found: {models}")
+    return models
+
+
+def upscayl(input_path: Path, output_path: Path, *, model: str, scale: Literal[2, 3, 4]) -> None:
+    model_dir = _model_dir()
+    available = [p.stem for p in model_dir.glob("*.bin")]
+    if model not in available:
+        close = get_close_matches(model, available)
+        hint = f"did you mean: {close}" if close else f"available: {sorted(available)}"
+        raise SystemExit(f"model:{model} not in allowable models, {hint}")
+    subprocess.run(
+        ["upscayl-bin", "-i", str(input_path), "-o", str(output_path), "-m", str(model_dir), "-n", model, "-s", str(scale)],
+        check=True,
+    )
 
 
 def choose_scale(current_width: int, target_width: int) -> Literal[2, 3, 4]:
