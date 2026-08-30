@@ -17,6 +17,9 @@ dependencies = [
     "pymupdf>=1.28.2",
     "pypdf>=6.15.0",
     "sh>=2.3.0",
+    "onnxscript>=0.1.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
     "vtracer>=0.6.15",
 ]
 
