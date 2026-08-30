@@ -50,7 +50,9 @@ def choose_scale(current_width: int, target_width: int) -> Literal[2, 3, 4]:
 
 
 def process(img_path: Path, args) -> dict | None:
-    out_path = img_path.with_name(img_path.stem + args.suffix + ".jpg")
+    out_dir = args.directory / args.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / (img_path.stem + args.suffix + ".jpg")
     if out_path.exists():
         print(f"Skipping (output exists): {img_path.name}")
         return None
@@ -61,23 +63,22 @@ def process(img_path: Path, args) -> dict | None:
     print(f"Processing: {img_path.name} ({orig_w}x{orig_h})")
 
     scale = choose_scale(orig_w, args.width)
-    pass1 = img_path.with_name(img_path.stem + "_pass1.png")
+    tmp = out_dir / (img_path.stem + "_tmp")
     print(f"  Pass 1: upscayl {args.pass1_model} (scale={scale})")
-    upscayl(img_path, pass1, model=args.pass1_model, scale=scale)
+    upscayl(img_path, tmp.with_suffix(".png"), model=args.pass1_model, scale=scale)
 
-    current = pass1
+    current = tmp.with_suffix(".png")
     if not args.no_pass2:
-        pass2 = img_path.with_name(img_path.stem + "_pass2.png")
         print(f"  Pass 2: upscayl {args.pass2_model} (scale=2)")
-        upscayl(pass1, pass2, model=args.pass2_model, scale=2)
-        current = pass2
+        upscayl(current, tmp.with_suffix("_p2.png"), model=args.pass2_model, scale=2)
+        current.unlink()
+        current = tmp.with_suffix("_p2.png")
 
     with Image.open(current) as img:
         new_h = round(args.width * img.height / img.width)
         result = img.convert("RGB").resize((args.width, new_h), Image.LANCZOS)  # ty:ignore[unresolved-attribute]
     result.save(out_path, "JPEG", quality=args.quality, optimize=True)
 
-    pass1.unlink(missing_ok=True)
     current.unlink(missing_ok=True)
 
     final_kb = out_path.stat().st_size // 1024
@@ -100,11 +101,12 @@ def main() -> None:
     parser.add_argument("--pass2-model", default="ultrasharp-4x")
     parser.add_argument("--no-pass2", action="store_true", help="skip the sharpening pass")
     parser.add_argument("--suffix", default="_enhanced")
-    parser.add_argument("--quality", type=int, default=95)
+    parser.add_argument("--output-dir", default="upscaled", help="output subfolder name")
+    parser.add_argument("--quality", type=int, default=85, help="JPEG quality (0-100)")
     parser.add_argument("--workers", type=int, default=3)
     args = parser.parse_args()
 
-    skip = ("_pass1", "_pass2", args.suffix)
+    skip = ("_pass1", "_pass2", args.suffix, "_tmp", "_p2")
     images = [
         p
         for p in sorted(args.directory.iterdir())
