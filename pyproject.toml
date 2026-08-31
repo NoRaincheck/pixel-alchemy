@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "controlnet-aux>=0.0.10",
     "huggingface_hub>=0.20.0",
     "img2pdf>=0.6.3",
     "onnx>=1.22.0",
