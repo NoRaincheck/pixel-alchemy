@@ -24,6 +24,11 @@ dependencies = [
     "vtracer>=0.6.15",
 ]
 
+[project.optional-dependencies]
+tau = [
+    "tau-ai @ git+https://github.com/huggingface/tau.git",
+]
+
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
@@ -38,3 +43,6 @@ dev = [
 
 [tool.ruff]
 line-length = 120
+
+[tool.uv.sources]
+tau-ai = { git = "https://github.com/huggingface/tau.git" }
