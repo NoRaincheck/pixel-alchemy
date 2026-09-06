@@ -1,9 +1,9 @@
-"""Moodist Python port — combine samples/sounds into layered wav.
+"""Moodist Python port — combine samples/sounds into layered ogg.
 
 Mirrors the JS app's sound-store + Howler mixing, now in Python:
 - catalog lists 9 categories / 91 sounds from samples/sounds/
 - SoundStore selects/volumes/shuffle (port of moodist/src/stores/sound.ts)
-- mixer loops + fades + peak-normalizes to a single wav
+- mixer loops + fades + peak-normalizes to a single ogg (Vorbis/Opus)
 - MoodPreset enum gives seeded preset variations matching the frontend moods
 """
 
@@ -14,7 +14,7 @@ from pixel_alchemy.moodist.mixer import mix
 from pixel_alchemy.moodist.presets import MoodPreset, PresetStore, preset_mix
 from pixel_alchemy.moodist.store import SoundStore
 
-out_dir = Path(__file__).parent
+out_dir = Path.cwd()
 missing = validate()
 assert not missing, f"missing samples: {missing[:3]}"
 
@@ -25,14 +25,14 @@ for cat in CATEGORIES:
 # 1) explicit mix — rainy forest focus
 store = SoundStore()
 store.override({"light-rain": 0.6, "river": 0.4, "birds": 0.3, "brown-noise": 0.2})
-out1 = out_dir / "moodist_focus.wav"
+out1 = out_dir / "moodist_focus.ogg"
 mix(store.selected(), out1, duration=10, fade_in=1, fade_out=1)
 print(f"wrote {out1} ({out1.stat().st_size} bytes) from {store.selected()}")
 
 # 2) shuffle mix — 4 random sounds like Moodist shuffle button
 store2 = SoundStore()
 store2.shuffle()
-out2 = out_dir / "moodist_shuffle.wav"
+out2 = out_dir / "moodist_shuffle.ogg"
 mix(store2.selected(), out2, duration=10)
 print(f"wrote {out2} ({out2.stat().st_size} bytes) from {store2.selected()}")
 
@@ -43,7 +43,7 @@ presets.add("deep work", store.selected())
 print(f"presets: {[(p.label, p.sounds) for p in presets.presets]}")
 # reapply first preset
 store.override(presets.presets[0].sounds)
-out3 = out_dir / "moodist_preset.wav"
+out3 = out_dir / "moodist_preset.ogg"
 mix(store.selected(), out3, duration=10)
 print(f"wrote {out3} from preset '{presets.presets[0].label}'")
 
@@ -54,7 +54,7 @@ for preset in [MoodPreset.RAIN, MoodPreset.FOREST, MoodPreset.CAFE, MoodPreset.F
     print(f"  {preset.value}: pool={preset_mix(preset, seed=0).keys()}")
 for seed in [0, 1, 2]:
     sounds = preset_mix(MoodPreset.RAIN, seed=seed)
-    out = out_dir / f"moodist_builtin_rain_s{seed}.wav"
+    out = out_dir / f"moodist_builtin_rain_s{seed}.ogg"
     mix(sounds, out, duration=8)
     print(f"wrote {out.name} seed={seed} {sounds}")
 # enum is string-comparable and human readable

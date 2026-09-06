@@ -1,7 +1,7 @@
-"""Mix selected Moodist sounds into a single wav.
+"""Mix selected Moodist sounds into a single wav/ogg.
 
 Loops short samples to fill `duration`, applies per-sound volume and master
-fade, then writes 44.1kHz stereo wav via soundfile. Mirrors Howler's
+fade, then writes 44.1kHz stereo via soundfile. Mirrors Howler's
 loop+volume+fade behavior in `moodist` without browser APIs.
 """
 
@@ -53,11 +53,11 @@ def mix(
     fade_out: float = 1.0,
     normalize: bool = True,
 ) -> Path:
-    """Mix `sounds` ({id: volume 0-1}) into `output` wav.
+    """Mix `sounds` ({id: volume 0-1}) into `output` wav/ogg.
 
     Args:
         sounds: mapping sound_id -> volume. Missing ids raise FileNotFoundError.
-        output: destination wav path.
+        output: destination wav/ogg path (ogg uses Vorbis at 44.1kHz, Opus at 48kHz).
         duration: seconds to render (loops each source).
         fade_in/out: linear fade seconds at head/tail.
         normalize: peak-normalize to 0.89 if >1.0 else gentle boost if very quiet.
@@ -106,7 +106,14 @@ def mix(
 
     # mono -> stereo duplicate for richer output like Howler stereo
     stereo = np.stack([mix_buf, mix_buf], axis=1)
-    sf.write(str(output), stereo, target_sr)
+    if output.suffix.lower() == ".ogg":
+        # Opus only supports 8/12/16/24/48k; Vorbis supports 44.1k
+        if target_sr in (8000, 12000, 16000, 24000, 48000):
+            sf.write(str(output), stereo, target_sr, format="OGG", subtype="OPUS")
+        else:
+            sf.write(str(output), stereo, target_sr, format="OGG", subtype="VORBIS")
+    else:
+        sf.write(str(output), stereo, target_sr)
     return output
 
 
