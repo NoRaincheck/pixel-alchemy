@@ -77,7 +77,7 @@ with_fx :reverb, room: 0.92, mix: 0.65, damp: 0.85 do
 
       # -- taiko processional: sparse, heavy, ritual — every ~8 beats like the film score --
       live_loop :taiko do
-        sync :drone if one_in(6) # occasionally re-anchor to drone for temple steadiness
+        sync :drone if tick != 0 && one_in(6) # re-anchor after first hit; tick==0 guarantees immediate downbeat
         sample :bd_boom, amp: 1.15, cutoff: 72, rate: 0.88, pan: rrand(-0.12, 0.12)
         sleep 4
         sample :drum_bass_hard, amp: 0.95, rate: 0.84, cutoff: 85
