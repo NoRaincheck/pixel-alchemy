@@ -27,6 +27,8 @@ dependencies = [
     "torchaudio>=2.0.0",
     "torchvision>=0.15.0",
     "vtracer>=0.6.15",
+    "tau-ai>=0.4.1",
+    "librosa>=1.0.0",
 ]
 
 [project.optional-dependencies]
