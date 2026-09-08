@@ -29,7 +29,11 @@ dependencies = [
     "vtracer>=0.6.15",
     "tau-ai>=0.4.1",
     "librosa>=1.0.0",
+    "mcp>=2.2.0",
 ]
+
+[project.scripts]
+pixel-alchemy-mcp = "pixel_alchemy.mcp.server:main"
 
 [project.optional-dependencies]
 tau = [

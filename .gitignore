@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# MCP persistent outputs (cleaned on shutdown)
+mcp_outputs/
