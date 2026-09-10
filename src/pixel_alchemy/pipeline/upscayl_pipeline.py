@@ -8,6 +8,12 @@ from PIL import Image, ImageFilter
 
 from pixel_alchemy.super_resolution.upscayl import upscayl
 
+# Allow images up to 10k x 10k (100 MP); Pillow default ~89 MP would reject
+# a 10000x10000 image with DecompressionBombError.  Disable/lift the limit
+# here — the MCP layer already caps target_width to 10000 and we validate
+# final dimensions below.
+Image.MAX_IMAGE_PIXELS = None  # type: ignore[attr-defined]
+
 
 def _upscale_step(
     input_path: Path,
@@ -27,6 +33,8 @@ def _blur_and_downscale(
     blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
     cur_w, cur_h = blurred.size
     new_h = round(target_width * cur_h / cur_w)
+    if new_h > 10000:
+        raise ValueError(f"resulting height {new_h} exceeds 10000 — choose a smaller target_width (10k x 10k max)")
     return blurred.resize((target_width, new_h), Image.LANCZOS)  # ty:ignore[unresolved-attribute]
 
 
@@ -47,6 +55,9 @@ def upscayl_pipeline(
     input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input not found: {input_path}")
+
+    if target_width > 10000:
+        raise ValueError("target_width must be <= 10000 (10k x 10k max)")
 
     if output_path is None:
         output_path = input_path.parent / f"{input_path.stem}_pipelined.png"

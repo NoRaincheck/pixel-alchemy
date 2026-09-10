@@ -660,7 +660,7 @@ def upscale_image(
         ),
     ] = "",
     target_width: Annotated[
-        int, Field(description="Exact final width in pixels (aspect preserved).", ge=1, le=16384)
+        int, Field(description="Exact final width in pixels (aspect preserved).", ge=1, le=10000)
     ] = 2048,
     blur_multipliers: Annotated[
         list[float] | None,
