@@ -5,6 +5,8 @@ Tools:
 - remove_background — BiRefNet background removal
 - remove_background_flood — flood-fill background removal by sampling 4 corners
 - upscale_image   — upscayl_pipeline (multi-pass upscayl + blur + Lanczos downscale)
+- list_images     — query available images in mcp_outputs (with metadata)
+- get_image       — retrieve an image by path/filename from mcp_outputs
 
 All tools accept/return base64-encoded images via MCP ImageContent, so they are
 reachable from remote machines via any MCP client over Streamable HTTP
@@ -18,11 +20,10 @@ Run:
 from __future__ import annotations
 
 import argparse
-import atexit
 import base64
+import json
 import os
 import re
-import shutil
 import tempfile
 import time
 import uuid
@@ -87,20 +88,14 @@ def _save_persistent(data: bytes, prefix: str, suffix: str = ".png") -> Path:
 
 
 def _cleanup_outputs() -> None:
-    if OUTPUT_DIR.exists():
-        shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
-
-
-atexit.register(_cleanup_outputs)
+    # No-op: outputs are preserved per user request (do not auto-delete mcp_outputs).
+    return
 
 
 @asynccontextmanager
 async def _lifespan(server: MCPServer):  # type: ignore[no-untyped-def]
     _ensure_output_dir()
-    try:
-        yield
-    finally:
-        _cleanup_outputs()
+    yield
 
 
 mcp = MCPServer(
@@ -108,7 +103,8 @@ mcp = MCPServer(
     instructions=(
         "Pixel Alchemy image tools: generate images with Z-image (sd-cli), "
         "remove backgrounds with BiRefNet or corner flood-fill (4-corner sampling), "
-        "and upscale via upscayl-pipeline."
+        "and upscale via upscayl-pipeline. "
+        "Use list_images to see available outputs in mcp_outputs, and get_image to retrieve one by path/filename."
     ),
     lifespan=_lifespan,
 )
@@ -739,6 +735,168 @@ def upscale_image(
 
 
 # ---------------------------------------------------------------------------
+# Image inventory — list / retrieve from mcp_outputs
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".gif"}
+
+
+def _image_info(p: Path) -> dict:
+    try:
+        stat = p.stat()
+        size = stat.st_size
+        mtime = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(stat.st_mtime))
+    except Exception:
+        size = 0
+        mtime = ""
+    rel = p.relative_to(_REPO_ROOT) if p.is_relative_to(_REPO_ROOT) else p
+    info: dict = {
+        "filename": p.name,
+        "path": str(p),
+        "relative_path": str(rel),
+        "size_bytes": size,
+        "modified": mtime,
+    }
+    # quick dimensions without heavy deps
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(p) as im:
+            info["width"] = im.width
+            info["height"] = im.height
+            info["mode"] = im.mode
+            info["format"] = im.format
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return info
+
+
+def _resolve_image_request(name: str) -> Path:
+    s = name.strip()
+    if not s:
+        raise ValueError("image_path must be non-empty")
+    if s.startswith("file://"):
+        s = s[len("file://") :]
+        if s.startswith("///"):
+            s = s[2:]
+    p = Path(s).expanduser()
+    out_resolved = OUTPUT_DIR.resolve()
+
+    # Absolute path — must be inside OUTPUT_DIR
+    if p.is_absolute():
+        try:
+            resolved = p.resolve()
+            if resolved.is_relative_to(out_resolved) and resolved.exists() and resolved.is_file():
+                return resolved
+        except Exception:
+            pass
+        raise FileNotFoundError(
+            f"Image not found or outside mcp_outputs: {name} (allowed dir: {OUTPUT_DIR})"
+        )
+
+    # Try direct relative candidates inside OUTPUT_DIR
+    candidates = [
+        OUTPUT_DIR / s,
+        OUTPUT_DIR / Path(s).name,
+        _REPO_ROOT / s,
+    ]
+    for cand in candidates:
+        try:
+            if cand.exists() and cand.is_file() and cand.resolve().is_relative_to(out_resolved):
+                return cand.resolve()
+        except Exception:  # noqa: BLE001, S110
+            continue
+
+    # Fallback: search by exact filename inside OUTPUT_DIR
+    target = Path(s).name
+    if OUTPUT_DIR.exists():
+        for f in OUTPUT_DIR.iterdir():
+            if f.name == target and f.is_file():
+                return f.resolve()
+
+    raise FileNotFoundError(
+        f"Image not found: {name} (searched in {OUTPUT_DIR}). Use list_images to see available files."
+    )
+
+
+@mcp.tool()
+def list_images(
+    prefix: Annotated[
+        str | None,
+        Field(description="Optional filename prefix filter, e.g. 'generate', 'foreground', 'upscaled'. Case-sensitive substring match."),
+    ] = None,
+    limit: Annotated[int, Field(description="Max number of images to return (newest first).", ge=1, le=500)] = 50,
+    offset: Annotated[int, Field(description="Offset for pagination (newest first).", ge=0)] = 0,
+) -> list[TextContent]:  # type: ignore[valid-type]
+    """List available images in mcp_outputs.
+
+    Args:
+        prefix: Optional substring filter on filename (e.g. 'generate' or 'foreground').
+        limit: Max number to return (default 50, newest first).
+        offset: Pagination offset.
+
+    Returns:
+        JSON list of image metadata (filename, path, relative_path, size_bytes, modified, width/height) + human-readable summary.
+    """
+    _ensure_output_dir()
+    if not OUTPUT_DIR.exists():
+        return [TextContent(type="text", text=json.dumps([], indent=2))]
+
+    files = [p for p in OUTPUT_DIR.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXTS]
+    if prefix and prefix.strip():
+        needle = prefix.strip()
+        files = [p for p in files if needle in p.name]
+
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    total = len(files)
+    sliced = files[offset : offset + limit]
+
+    infos = [_image_info(p) for p in sliced]
+    summary = f"Showing {len(infos)}/{total} images in {OUTPUT_DIR} (offset {offset}, limit {limit})"
+    if prefix:
+        summary += f" filtered by prefix '{prefix}'"
+    body = summary + "\n" + json.dumps(infos, indent=2)
+    # Also include relative paths hint
+    if infos:
+        body += "\n\nTo retrieve: call get_image with image_path set to the 'path' or 'filename' above."
+    else:
+        body += "\n\nNo images match. Generate one with generate_image first."
+    return [TextContent(type="text", text=body)]
+
+
+@mcp.tool()
+def get_image(
+    image_path: Annotated[
+        str,
+        Field(description="Path or filename of image to retrieve. Accepts bare filename (e.g. 'generate_...png'), relative path 'mcp_outputs/...png', absolute path inside mcp_outputs, or file:// URI. Use list_images to discover names.", min_length=1),
+    ],
+) -> list[Image | TextContent]:  # type: ignore[valid-type]
+    """Retrieve an image from mcp_outputs by path or filename.
+
+    Args:
+        image_path: Filename or path inside mcp_outputs (e.g. 'generate_20260304_...png' or 'mcp_outputs/generate_...png' or absolute path). Use list_images first to discover available images.
+
+    Returns:
+        PNG/JPEG image + local path confirmation. Works for any image previously saved by generate_image, remove_background, upscale_image, etc.
+    """
+    p = _resolve_image_request(image_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Image not found: {image_path} -> {p}")
+    if p.suffix.lower() not in _IMAGE_EXTS:
+        raise ValueError(f"Not an image file: {p} (allowed: {sorted(_IMAGE_EXTS)})")
+    data = p.read_bytes()
+    # keep .jpg as jpeg for MCP
+    suffix = p.suffix.lower()
+    fmt = {"png": "png", ".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp"}.get(suffix, "png")
+    # Provide base64 via Image(data=...) — MCP will send as content block
+    rel = p.relative_to(_REPO_ROOT) if p.is_relative_to(_REPO_ROOT) else p
+    return [
+        Image(data=data, format=fmt),
+        TextContent(type="text", text=f"Retrieved {p.name} from {p} (relative: {rel}, {len(data)} bytes, {fmt})"),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # CLI / entrypoint
 # ---------------------------------------------------------------------------
 
@@ -764,20 +922,16 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    try:
-        # MCPServer.run handles anyio + uvicorn internally; lifespan cleans OUTPUT_DIR,
-        # but also clean here for abrupt SIGINT/CancelledError where lifespan may abort.
-        # max_request_body_size must be >100MB to accept large b64 payloads (default 250 MiB).
-        mcp.run(
-            transport="streamable-http",
-            host=args.host,
-            port=args.port,
-            streamable_http_path=args.path,
-            stateless_http=args.stateless,
-            max_request_body_size=args.max_body_size,
-        )
-    finally:
-        _cleanup_outputs()
+    # mcp_outputs is intentionally preserved after shutdown (no cleanup).
+    # max_request_body_size must be >100MB to accept large b64 payloads (default 250 MiB).
+    mcp.run(
+        transport="streamable-http",
+        host=args.host,
+        port=args.port,
+        streamable_http_path=args.path,
+        stateless_http=args.stateless,
+        max_request_body_size=args.max_body_size,
+    )
 
 
 if __name__ == "__main__":
