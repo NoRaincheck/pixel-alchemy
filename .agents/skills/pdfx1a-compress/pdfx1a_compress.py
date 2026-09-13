@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-pdfx1a_compress.py — make a print-ready, reproducible PDF/X-1a with minimal size growth.
+pdfx1a_compress.py — make a print-ready, reproducible PDF/X file with minimal size growth.
 
-Pipeline
+Pipeline (PDF/X-1a)
 --------
 If the input already uses only CMYK/Gray colour, it is finalised directly.
 
 If the input carries RGB/Lab colour or transparency (e.g. a Quartz export),
 Ghostscript first converts everything to DeviceCMYK (fonts embedded,
-images re-encoded as JPEG, transparency flattened), then the deterministic
-finalizer takes over:
+  images re-encoded as JPEG, transparency flattened), then the deterministic
+  finalizer takes over. With --pdfx-version PDF/X-4 no conversion runs:
+  RGB, transparency and layers pass through untouched and only conformance
+  metadata (TrimBox, OutputIntent, Info, XMP, IDs) plus image optimisation
+  are applied.
 
   * image pixels only change when you ask them to (`--quality`);
     otherwise just a lossless `jpegtran -optimize` pass, kept if smaller;
@@ -164,9 +167,11 @@ def inherited_mediabox(objs, page_num):
 
 # ----------------------------------------------------------------- writing
 
-def serialize(objs, root_ref, info_ref, doc_hex, inst_hex):
+def serialize(objs, root_ref, info_ref, doc_hex, inst_hex, pdf_version="PDF/X-1a:2001"):
     buf = io.BytesIO()
-    buf.write(b"%PDF-1.3\n%\xe2\xe3\xcf\xd3\n")
+    # PDF/X-4 is PDF 1.6-based; X-1a:2003 is 1.4-based; X-1a:2001 is 1.3-based
+    pdf_ver = {"PDF/X-4": "1.6", "PDF/X-1a:2003": "1.4"}.get(pdf_version, "1.3")
+    buf.write(b"%%PDF-%s\n%%\xe2\xe3\xcf\xd3\n" % pdf_ver.encode())
     offsets = {}
     for num in sorted(objs):
         o = objs[num]
@@ -212,6 +217,11 @@ def xml_escape(s):
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def pdf_str(s):
+    """Escape a Python string as a PDF literal-string body."""
+    return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def normalize_date(s):
@@ -285,6 +295,28 @@ def recompress_jpeg(data, quality, subsampling):
     return buf.getvalue() or None
 
 
+def image_is_rgb(h, objs):
+    """True if an image dict uses an RGB/CalRGB/Lab colour space, including
+    indirect or inline ICCBased profiles with N=3."""
+    if re.search(rb"/DeviceRGB|/CalRGB|/Lab\b", h):
+        return True
+    # /ColorSpace <ref> where the object is [/ICCBased <icc-ref>]
+    for r in re.findall(rb"/ColorSpace\s*(\d+)\s+\d+\s+R", h):
+        arr = objs.get(int(r))
+        if arr is None:
+            continue
+        for icc_ref in re.findall(rb"/ICCBased\s+(\d+)\s+\d+\s+R", arr.dict_bytes()):
+            icc_obj = objs.get(int(icc_ref))
+            if icc_obj and re.search(rb"/N\s+3\b", icc_obj.dict_bytes()):
+                return True
+    # inline /ColorSpace [/ICCBased <icc-ref>] — ref points at the profile stream
+    for icc_ref in re.findall(rb"/ColorSpace\s*\[\s*/ICCBased\s+(\d+)\s+\d+\s+R", h):
+        icc_obj = objs.get(int(icc_ref))
+        if icc_obj and re.search(rb"/N\s+3\b", icc_obj.dict_bytes()):
+            return True
+    return False
+
+
 def pick_image_candidate(original, jpegtran, args):
     """Return (best_bytes_or_None, method) where best beats `original` in size.
 
@@ -321,32 +353,18 @@ def pick_image_candidate(original, jpegtran, args):
 
 # ----------------------------------------------------------------- conversion
 
-def find_conversion_reasons(objs):
-    """List reasons why a document cannot be finalised to PDF/X-1a as-is
-    (RGB/Lab colour, transparency). Empty list == already colour-clean."""
+def find_conversion_reasons(objs, pdf_version="PDF/X-1a:2001"):
+    """Reasons a document cannot be finalised to PDF/X-1a as-is (RGB/Lab
+    colour, transparency). Empty list == colour-clean. PDF/X-4 permits RGB
+    and transparency, so it never needs conversion."""
+    if pdf_version == "PDF/X-4":
+        return []
     reasons = {}
     rgb_images = rgb_ops = transp = 0
     for o in objs.values():
         h = o.dict_bytes()
         if re.search(rb"/Subtype\s*/Image", h) and o.stream is not None:
-            is_rgb = bool(re.search(rb"/DeviceRGB|/CalRGB|/Lab\b", h))
-            cs_ref = re.search(rb"/ColorSpace\s*(\d+)\s+\d+\s+R", h)
-            if not is_rgb and cs_ref:
-                # /ColorSpace <ref> where object is [/ICCBased <stream>]
-                arr = objs.get(int(cs_ref.group(1)))
-                m2 = re.search(rb"/ICCBased\s+(\d+)\s+\d+\s+R", arr.head) if arr else None
-                if m2:
-                    icc_obj = objs.get(int(m2.group(1)))
-                    if icc_obj and re.search(rb"/N\s+3\b", icc_obj.dict_bytes()):
-                        is_rgb = True
-            if not is_rgb:
-                m3 = re.search(
-                    rb"/ColorSpace\s*\[\s*/ICCBased\s+(\d+)\s+\d+\s+R", h)
-                if m3:
-                    icc_obj = objs.get(int(m3.group(1)))
-                    if icc_obj and re.search(rb"/N\s+3\b", icc_obj.dict_bytes()):
-                        is_rgb = True
-            if is_rgb:
+            if image_is_rgb(h, objs):
                 rgb_images += 1
         if re.search(rb"/Type\s*/ExtGState", h):
             for key in (b"/CA", b"/ca"):
@@ -392,6 +410,9 @@ def ghostscript_convert(src_bytes, workdir, args):
     samples_v = {"none": "[1 1 1 1]", "422": "[1 1 1 1]",
                  "auto": "[1 1 1 1]", "420": "[2 1 1 1]"}[args.subsampling]
     out_path = os.path.join(workdir, "stage1_cmyk.pdf")
+    in_path = os.path.join(workdir, "stage0_input.pdf")
+    with open(in_path, "wb") as f:
+        f.write(src_bytes)
     cmd = [
         gs, "-dSAFER", "-dBATCH", "-dNOPAUSE", "-q",
         "-sDEVICE=pdfwrite",
@@ -410,7 +431,7 @@ def ghostscript_convert(src_bytes, workdir, args):
         "<< /ColorImageDict << /QFactor 0.4 /HSamples %s /VSamples %s >> "
         "/GrayImageDict << /QFactor 0.4 /HSamples [1 1] /VSamples [1 1] >> "
         ">> setdistillerparams" % (samples_h, samples_v),
-        "-f", os.path.abspath(args.input),
+        "-f", in_path,
     ]
     p = subprocess.run(cmd, capture_output=True)
     if p.returncode != 0 or not os.path.isfile(out_path):
@@ -462,6 +483,20 @@ def build_xmp(title, creator, date_d, producer, pdfx_version, doc_hex, inst_hex)
     ).encode("utf-8")
 
 
+def set_stream_length(obj, objs, new_len):
+    """Point an image stream's /Length at new_len. Handles both direct
+    `/Length 123` and indirect `/Length 9 0 R` (also refreshes the target
+    so no stale length object is left behind)."""
+    m = re.search(rb"/Length\s+(\d+)\s+\d+\s+R", obj.head)
+    if m:
+        obj.head = obj.head[: m.start()] + b"/Length %d" % new_len + obj.head[m.end():]
+        target = objs.get(int(m.group(1)))
+        if target is not None and target.stream is None and re.fullmatch(rb"\s*\d+\s*", target.head):
+            target.head = b"%d" % new_len
+    else:
+        obj.head = re.sub(rb"/Length\s+\d+", b"/Length %d" % new_len, obj.head, count=1)
+
+
 # ----------------------------------------------------------------- compress
 
 def cmd_compress(args):
@@ -470,13 +505,18 @@ def cmd_compress(args):
         orig_data = f.read()
 
     # ---- stage 0: parse + decide whether colour conversion is needed ------
+    pdfx_version = args.pdfx_version
     try:
         objs = parse_pdf(orig_data)
     except ValueError:
         objs = None
-    reasons = find_conversion_reasons(objs) if objs is not None else [
+    reasons = find_conversion_reasons(objs, pdfx_version) if objs is not None else [
         "structure not directly parseable (object streams / newer PDF)"
     ]
+    if objs is None and pdfx_version == "PDF/X-4":
+        sys.exit("error: cannot parse PDF (object streams / newer structures), "
+                 "and PDF/X-4 must not be colour-converted. Normalize first:\n"
+                 "  qpdf --object-streams=disable INPUT.pdf TMP.pdf")
     converted = False
     data = orig_data
     if reasons and not args.no_convert:
@@ -513,15 +553,17 @@ def cmd_compress(args):
     with open(icc_path, "rb") as f:
         icc = f.read()
 
-    pdfx_version = args.pdfx_version
-
     # Determinism: dates/IDs always derive from the ORIGINAL bytes, never
     # from a Ghostscript intermediate (which embeds wall-clock stamps).
-    orig_root, orig_info_ref = get_trailer_refs(orig_data)
+    # --id-source points at the true original for two-stage pipelines.
+    id_path = os.path.abspath(args.id_source) if args.id_source else src_path
+    with open(id_path, "rb") as f:
+        id_data = f.read()
+    orig_root, orig_info_ref = get_trailer_refs(id_data)
     orig_info_head = b""
     if orig_info_ref:
         try:
-            orig_info_head = parse_pdf(orig_data)[orig_info_ref].head
+            orig_info_head = parse_pdf(id_data)[orig_info_ref].head
         except ValueError:
             pass
     date_d = resolve_date(args.date, orig_info_head)
@@ -532,11 +574,11 @@ def cmd_compress(args):
         m = re.search(re.escape(kb) + rb"\s*\(([^)]*)\)", info_head)
         return m.group(1).decode("latin1") if m else default
 
-    title = args.title or paren_str("/Title", os.path.basename(src_path))
+    title = args.title or paren_str("/Title", os.path.basename(id_path))
     creator = args.creator or paren_str("/Creator", "")
 
-    doc_hex = sha_hex(orig_data)[:32]
-    inst_hex = sha_hex(b"instance:" + orig_data)[:32]
+    doc_hex = sha_hex(id_data)[:32]
+    inst_hex = sha_hex(b"instance:" + id_data)[:32]
 
     # After RGB->CMYK conversion the image data is already a lossy generation
     # (Ghostscript re-encode), so keeping its large streams verbatim has no
@@ -564,7 +606,7 @@ def cmd_compress(args):
         if new is not None:
             saved_by[method] += len(o.stream) - len(new)
             stats[method] += 1
-            o.head = re.sub(rb"/Length\s+\d+", b"/Length %d" % len(new), o.head, count=1)
+            set_stream_length(o, objs, len(new))
             o.stream = new
         else:
             stats["original"] += 1
@@ -637,7 +679,7 @@ def cmd_compress(args):
             b"<< /Title (%s) /CreationDate (%s) /ModDate (%s) "
             b"/GTS_PDFXVersion (%s) /Trapped /False "
             % (
-                title.encode("latin1"),
+                pdf_str(title).encode("latin1", "replace"),
                 date_d.encode(),
                 date_d.encode(),
                 pdfx_version.encode(),
@@ -647,7 +689,7 @@ def cmd_compress(args):
         )
 
     # ---- 6. serialize -------------------------------------------------------
-    out = serialize(objs, root_ref, new_info_num or info_ref, doc_hex, inst_hex)
+    out = serialize(objs, root_ref, new_info_num or info_ref, doc_hex, inst_hex, pdfx_version)
     with open(os.path.abspath(args.output), "wb") as f:
         f.write(out)
 
@@ -680,14 +722,14 @@ def cmd_compress(args):
     print("dates pinned to : %s" % date_d)
     if jpegtran is None and not args.no_jpeg_opt:
         print("note            : jpegtran not found — install libjpeg-turbo for lossless image savings")
-    ok, _ = run_checks(os.path.abspath(args.output), quiet=True)
+    ok, _ = run_checks(os.path.abspath(args.output), pdfx_version, quiet=True)
     print("self-check      : %s" % ("PASS" if ok else "FAIL (run `verify` for details)"))
     sys.exit(0 if ok else 1)
 
 
 # ----------------------------------------------------------------- verify
 
-def run_checks(path, quiet=False):
+def run_checks(path, pdf_version="PDF/X-1a:2001", quiet=False):
     with open(path, "rb") as f:
         data = f.read()
     fails, warns = [], []
@@ -702,8 +744,9 @@ def run_checks(path, quiet=False):
         if not cond:
             (warns if warn else fails).append(name)
 
-    check("header is PDF 1.3/1.4",
-          data.startswith(b"%PDF-1.3") or data.startswith(b"%PDF-1.4"),
+    check("header version fits standard",
+          data.startswith(b"%PDF-1.3") or data.startswith(b"%PDF-1.4") if pdf_version != "PDF/X-4"
+          else data.startswith((b"%PDF-1.4", b"%PDF-1.5", b"%PDF-1.6", b"%PDF-1.7")),
           data[:8].decode("latin1"))
 
     try:
@@ -725,7 +768,9 @@ def run_checks(path, quiet=False):
         check("intent.DestOutputProfile present", dest is not None)
         if dest:
             st = objs[dest]
-            check("ICC N==4 (CMYK)", b"/N 4" in st.dict_bytes())
+            nm = re.search(rb"/N\s+(\d+)", st.dict_bytes())
+            nchan = int(nm.group(1)) if nm else 0
+            check("ICC is CMYK (N==4)", nchan == 4, "N=%d" % nchan if nm else "no /N")
             check("ICC acsp magic",
                   st.stream is not None and len(st.stream) > 40 and st.stream[36:40] == b"acsp",
                   "%s bytes" % format(len(st.stream or b""), ","))
@@ -738,8 +783,8 @@ def run_checks(path, quiet=False):
 
     info = objs[info_ref].dict_bytes() if info_ref else b""
     v = re.search(rb"/GTS_PDFXVersion\s*\(([^)]*)\)", info)
-    check("info.GTS_PDFXVersion is PDF/X-1a",
-          bool(v) and v.group(1).startswith(b"PDF/X-1a:"),
+    check("info.GTS_PDFXVersion is PDF/X",
+          bool(v) and v.group(1).startswith(b"PDF/X-"),
           v.group(1).decode() if v else "missing")
     xv = v.group(1).decode() if v else ""
     check("info.Trapped == False", b"/Trapped /False" in info)
@@ -761,27 +806,36 @@ def run_checks(path, quiet=False):
     check("TrimBox==MediaBox on all pages", not bad_trim,
           "%d pages" % len(pages) if not bad_trim else "bad: %s" % bad_trim[:5])
 
+    def font_refs(h):
+        refs = []
+        fdr = dict_get_ref(h, b"/FontDescriptor")
+        if fdr:
+            refs.append(fdr)
+        for dfm in re.finditer(rb"/DescendantFonts\s*\[(.*?)\]", h, re.S):
+            refs.extend(int(r) for r in re.findall(rb"(\d+)\s+\d+\s+R", dfm.group(1)))
+        return refs
+
     unembedded = []
     for o in objs.values():
         h = o.dict_bytes()
         if not re.search(rb"/Type\s*/Font\b", h):
             continue
-        fd = None
-        if dict_get_ref(h, b"/FontDescriptor"):
-            fd = objs[dict_get_ref(h, b"/FontDescriptor")]
-        elif dict_get_ref(h, b"/DescendantFonts"):
-            df = re.search(rb"/DescendantFonts\s*\[\s*(\d+)\s+\d+\s+R", h)
-            if df:
-                dfh = objs[int(df.group(1))].dict_bytes()
-                fdr = dict_get_ref(dfh, b"/FontDescriptor")
-                if fdr:
-                    fd = objs[fdr]
-        if fd is None:
-            continue
-        fh = fd.dict_bytes()
-        if not any(k in fh for k in (b"/FontFile", b"/FontFile2", b"/FontFile3")):
-            bf = re.search(rb"/BaseFont\s*/([\w+-]+)", h)
-            unembedded.append(bf.group(1).decode() if bf else "?")
+        if re.search(rb"/Subtype\s*/Type3\b", h):
+            continue  # Type3 glyphs live in the content stream by definition
+        refs = font_refs(h)
+        # Type0/CID fonts hang the descriptor off the descendant, not the top dict
+        for f in list(refs):
+            fo = objs.get(f)
+            if fo is not None and re.search(rb"/Type\s*/Font\b", fo.dict_bytes()):
+                refs.extend(font_refs(fo.dict_bytes()))
+        embedded = any(
+            objs.get(f) is not None
+            and any(k in objs[f].dict_bytes() for k in (b"/FontFile", b"/FontFile2", b"/FontFile3"))
+            for f in refs
+        )
+        if not embedded:
+            bf = re.search(rb"/BaseFont\s*/([^\s/<>]+)", h)
+            unembedded.append(bf.group(1).decode() if bf else "obj %d" % o.num)
     check("all fonts embedded", not unembedded, ", ".join(sorted(set(unembedded))[:5]))
 
     rgb_ops = 0
@@ -800,7 +854,7 @@ def run_checks(path, quiet=False):
         if re.search(rb"/Subtype\s*/Image", h) and o.stream is not None:
             if b"/SMask" in h:
                 transp.append("image SMask obj %d" % o.num)
-            if re.search(rb"/DeviceRGB|/CalRGB", h):
+            if image_is_rgb(h, objs):
                 non_cmyk_images.append("obj %d RGB" % o.num)
         if o.stream is None or b"/Length" not in h:
             continue
@@ -813,9 +867,25 @@ def run_checks(path, quiet=False):
         if b"Tj" in body or b"TJ" in body or b"Do " in body:
             for op in (b"rg", b"RG"):
                 rgb_ops += len(re.findall(rb"(?:^|[\s])" + re.escape(op) + rb"[\s]", body))
-    check("no RGB colour operators in content", rgb_ops == 0, "%d found" % rgb_ops if rgb_ops else "")
-    check("no transparency (SMask/blend/alpha)", not transp, "; ".join(transp[:4]))
-    check("no RGB images", not non_cmyk_images, "; ".join(non_cmyk_images[:4]))
+    # PDF/X-4 permits RGB and live transparency; PDF/X-1a forbids both.
+    # Those checks are informational for X-4, strict for X-1a.
+    is_x4 = (pdf_version == "PDF/X-4")
+    if is_x4:
+        check("RGB operators (allowed in X-4)", True,
+              "%d present" % rgb_ops if rgb_ops else "none")
+    else:
+        check("no RGB colour operators in content", rgb_ops == 0,
+              "%d found" % rgb_ops if rgb_ops else "")
+    if is_x4:
+        check("transparency (allowed in X-4)", True,
+              "; ".join(transp[:4]) if transp else "none")
+    else:
+        check("no transparency (SMask/blend/alpha)", not transp, "; ".join(transp[:4]))
+    if is_x4:
+        check("image colour (any allowed in X-4)", True,
+              "; ".join(non_cmyk_images[:4]) if non_cmyk_images else "all CMYK/gray")
+    else:
+        check("no RGB images", not non_cmyk_images, "; ".join(non_cmyk_images[:4]))
 
     # external extras --------------------------------------------------------
     if shutil.which("qpdf"):
@@ -838,6 +908,7 @@ def run_checks(path, quiet=False):
         rows = p.stdout.decode().splitlines()[2:]
         big_cmyk = small_other = 0
         ppis = []
+        colours = set()
         cmyk_ok = True
         for r in rows:
             cols = r.split()
@@ -846,13 +917,20 @@ def run_checks(path, quiet=False):
             w, color, xp = int(cols[3]), cols[5], float(cols[12])
             if w >= 1000:
                 big_cmyk += 1
+                colours.add(color)
                 if color != "cmyk":
                     cmyk_ok = False
-                    emit("[FAIL] large image colour=%s on page %s" % (color, cols[0]))
+                    if pdf_version != "PDF/X-4":
+                        emit("[FAIL] large image colour=%s on page %s" % (color, cols[0]))
                 ppis.append(xp)
             else:
                 small_other += 1
-        check("large images are CMYK", cmyk_ok, "%d images" % big_cmyk)
+        detail = "%d images (%s)" % (big_cmyk, ",".join(sorted(colours)) or "none")
+        # PDF/X-4 allows RGB images; PDF/X-1a requires CMYK
+        if pdf_version == "PDF/X-4":
+            check("large images colour (any allowed in X-4)", True, detail)
+        else:
+            check("large images are CMYK", cmyk_ok, detail)
         if ppis:
             lo, hi = min(ppis), max(ppis)
             check("300 dpi preserved (>=295)", lo >= 295,
@@ -869,7 +947,12 @@ def run_checks(path, quiet=False):
 
 
 def cmd_verify(args):
-    ok, _ = run_checks(os.path.abspath(args.file))
+    # Detect PDF/X version from the file
+    with open(os.path.abspath(args.file), "rb") as f:
+        data = f.read()
+    v = re.search(rb"/GTS_PDFXVersion\s*\(([^)]+)\)", data)
+    detected_version = v.group(1).decode() if v else "PDF/X-1a:2001"
+    ok, _ = run_checks(os.path.abspath(args.file), detected_version)
     sys.exit(0 if ok else 1)
 
 
@@ -890,12 +973,13 @@ def main():
 
     ap = argparse.ArgumentParser(
         prog=TOOL_NAME,
-        description="Lossless-pixel PDF/X-1a finaliser & configurable JPEG "
-                    "recompressor (reproducible).",
+        description="Reproducible PDF/X finaliser & configurable JPEG "
+                    "recompressor (PDF/X-1a flattens to CMYK; PDF/X-4 keeps "
+                    "RGB/transparency).",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    c = sub.add_parser("compress", help="finalise to reproducible PDF/X-1a")
+    c = sub.add_parser("compress", help="finalise to reproducible PDF/X")
     c.add_argument("input")
     c.add_argument("output")
     c.add_argument("--quality", type=parse_quality, metavar="pNN|NN",
@@ -912,7 +996,7 @@ def main():
                    help="CMYK ICC profile for the OutputIntent (default: vendored default_cmyk.icc)")
     c.add_argument("--condition-id", default="CGATS TR001",
                    help="OutputConditionIdentifier string (default 'CGATS TR001')")
-    c.add_argument("--pdfx-version", choices=["PDF/X-1a:2001", "PDF/X-1a:2003"],
+    c.add_argument("--pdfx-version", choices=["PDF/X-1a:2001", "PDF/X-1a:2003", "PDF/X-4"],
                    default="PDF/X-1a:2001")
     c.add_argument("--date", help='pin Creation/ModDate, e.g. D:20260823120000Z '
                                   '(default: SOURCE_DATE_EPOCH > source date > fixed)')
@@ -923,9 +1007,13 @@ def main():
                         "when the audit says it is needed")
     c.add_argument("--no-jpeg-opt", action="store_true",
                    help="skip jpegtran lossless optimisation")
+    c.add_argument("--id-source", metavar="ORIG.pdf", default=None,
+                    help="derive deterministic dates/IDs from ORIG.pdf instead "
+                         "of the input (for two-stage pipelines where the input "
+                         "is already a Ghostscript intermediate)")
     c.set_defaults(func=cmd_compress)
 
-    v = sub.add_parser("verify", help="run PDF/X-1a structural checks")
+    v = sub.add_parser("verify", help="run PDF/X structural checks")
     v.add_argument("file")
     v.set_defaults(func=cmd_verify)
 

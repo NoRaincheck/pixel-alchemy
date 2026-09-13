@@ -1,12 +1,22 @@
 # pdfx1a-compress
 
-Turn any print PDF into a **conforming, reproducible PDF/X-1a (CMYK)** that is
+Turn any print PDF into a **conforming, reproducible PDF/X (CMYK)** that is
 as small as the artwork allows.
+
+> Keep RGB / transparency / layers? Use the sibling `pdfx4-embed` skill
+> instead — it only embeds fonts and finalises to PDF/X-4, no flattening.
 
 ```
 ./pdfx1a_compress.py compress INPUT.pdf OUTPUT.pdf [options]
 ./pdfx1a_compress.py verify   OUTPUT.pdf
 ```
+
+`--pdfx-version` selects the standard (`PDF/X-1a:2001` default, `:2003`,
+`PDF/X-4`). X-1a converts to CMYK and flattens transparency via Ghostscript;
+**PDF/X-4 skips conversion entirely** — RGB, transparency and layers pass
+through, only conformance metadata and image optimisation apply. (For files
+with unembedded fonts, prefer the `pdfx4-embed` skill, which adds a
+font-embedding pass in front.)
 
 ## Quick start
 
