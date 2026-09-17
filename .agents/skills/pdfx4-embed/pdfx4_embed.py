@@ -40,6 +40,7 @@ def gs_embed(src, dst):
         "-dDownsampleColorImages=false", "-dDownsampleGrayImages=false",
         "-dDownsampleMonoImages=false",
         "-dPassThroughJPEGImages=true", "-dPassThroughJPXImages=true",
+        "-c", "<< /NeverEmbed [] >> setdistillerparams",
         "-f", src,
     ]
     p = subprocess.run(cmd, capture_output=True)

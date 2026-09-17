@@ -79,6 +79,22 @@ class Obj:
 
 # ----------------------------------------------------------------- parsing
 
+def outer_length(head):
+    """Return (length, ref) for the top-level /Length, ignoring nested dicts
+    like /F << /Length ... >> (e.g. C2PA manifests)."""
+    depth = 0
+    best = (None, None)
+    for m in re.finditer(rb"<<|>>|/Length\s+(\d+)(\s+\d+\s+R)?", head):
+        tok = m.group(0)
+        if tok == b"<<":
+            depth += 1
+        elif tok == b">>":
+            depth -= 1
+        elif depth <= 1:
+            best = (None, int(m.group(1))) if m.group(2) else (int(m.group(1)), None)
+    return best
+
+
 def parse_pdf(data):
     """Parse a classic-xref PDF into {num: Obj}. No object streams, no encryption."""
     objs = {}
@@ -93,14 +109,12 @@ def parse_pdf(data):
         stm = re.compile(rb"\bstream(\r\n|\n|\r)").search(seg)
         if stm:
             head = seg[: stm.start()]
-            lm = re.search(rb"/Length\s+(\d+)\s+\d+\s+R", head)
-            if lm:
-                ref = int(lm.group(1))
+            direct, ref = outer_length(head)
+            if ref is not None:
                 m2 = re.search(rb"(?m)^%d\s+\d+\s+obj\s*(\d+)\s*endobj" % ref, data[:n])
                 length = int(m2.group(1)) if m2 else None
             else:
-                ln = re.search(rb"/Length\s+(\d+)", head)
-                length = int(ln.group(1)) if ln else None
+                length = direct
             if length is None:
                 raise ValueError("object %d: cannot resolve /Length" % num)
             payload_start = e - (len(seg) - stm.end())
@@ -430,6 +444,7 @@ def ghostscript_convert(src_bytes, workdir, args):
         "-c",
         "<< /ColorImageDict << /QFactor 0.4 /HSamples %s /VSamples %s >> "
         "/GrayImageDict << /QFactor 0.4 /HSamples [1 1] /VSamples [1 1] >> "
+        "/NeverEmbed [] "
         ">> setdistillerparams" % (samples_h, samples_v),
         "-f", in_path,
     ]
@@ -486,15 +501,18 @@ def build_xmp(title, creator, date_d, producer, pdfx_version, doc_hex, inst_hex)
 def set_stream_length(obj, objs, new_len):
     """Point an image stream's /Length at new_len. Handles both direct
     `/Length 123` and indirect `/Length 9 0 R` (also refreshes the target
-    so no stale length object is left behind)."""
-    m = re.search(rb"/Length\s+(\d+)\s+\d+\s+R", obj.head)
-    if m:
+    so no stale length object is left behind). Uses the top-level /Length
+    so nested dicts (e.g. /F << /Length ... >>) are left alone."""
+    direct, ref = outer_length(obj.head)
+    if ref is not None:
+        m = list(re.finditer(rb"/Length\s+\d+\s+\d+\s+R", obj.head))[-1]
         obj.head = obj.head[: m.start()] + b"/Length %d" % new_len + obj.head[m.end():]
-        target = objs.get(int(m.group(1)))
+        target = objs.get(ref)
         if target is not None and target.stream is None and re.fullmatch(rb"\s*\d+\s*", target.head):
             target.head = b"%d" % new_len
-    else:
-        obj.head = re.sub(rb"/Length\s+\d+", b"/Length %d" % new_len, obj.head, count=1)
+    elif direct is not None:
+        m = list(re.finditer(rb"/Length\s+\d+", obj.head))[-1]
+        obj.head = obj.head[: m.start()] + b"/Length %d" % new_len + obj.head[m.end():]
 
 
 # ----------------------------------------------------------------- compress
